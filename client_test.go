@@ -88,7 +88,7 @@ func TestExchangeAuthorizationCode(t *testing.T) {
 		Code:         "code_123",
 		ClientID:     "client_123",
 		ClientSecret: "server-secret",
-		RedirectURI:  "/agentpass/callback",
+		RedirectURI:  "https://app.example/agentpass/callback",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +143,11 @@ func TestCreateResponseGeneratesIdempotencyKey(t *testing.T) {
 		if len(request.Header.Get("Idempotency-Key")) != 36 {
 			t.Errorf("expected generated UUID, got %q", request.Header.Get("Idempotency-Key"))
 		}
-		_, _ = io.WriteString(response, `{"agentpass":{"receipt":{}}}`)
+		_, _ = io.WriteString(response, `{
+			"id":"request_generated","object":"agentpass.response","model":"fast-model",
+			"output_text":"done","usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2},
+			"agentpass":{"receipt":{"request_id":"request_generated","app":"Draftly","capability":"text.fast","credits_used":1,"remaining_credits":99,"settled_at":"2026-08-03T00:00:00Z"}}
+		}`)
 	}, agentpass.WithAccessToken("ap_test"))
 	if _, err := client.Responses.Create(context.Background(), agentpass.CreateResponseParams{
 		Capability: "text.fast",

@@ -34,6 +34,13 @@ result, err := client.Responses.Create(ctx, agentpass.CreateResponseParams{
     IdempotencyKey: jobID,
 })
 if err != nil {
+    var apiError *agentpass.APIError
+    switch {
+    case errors.As(err, &apiError):
+        // Branch on apiError.Code; retry only documented transient errors.
+    case errors.Is(err, agentpass.ErrInvalidResponse):
+        // Alert: the successful HTTP payload violated the protocol contract.
+    }
     return err
 }
 
@@ -58,6 +65,12 @@ refresh-token flow. Send the user through authorization again after expiry.
 The default HTTP timeout is five minutes; use `WithHTTPClient` when your
 backend needs a different deadline.
 
+The client refuses unexpected HTTP redirects and rejects malformed successful
+responses before returning them to application code. API rejections are typed
+as `*agentpass.APIError`; malformed success payloads wrap
+`agentpass.ErrInvalidResponse`. Retry only safe failures with the same
+idempotency key and identical request body.
+
 See `examples/backend` for a direct request and `examples/oauth-backend` for a
 complete local authorization, callback, inference, and receipt flow.
 
@@ -67,3 +80,7 @@ complete local authorization, callback, inference, and receipt flow.
 go test ./...
 go vet ./...
 ```
+
+Build production applications with a currently supported, fully patched Go
+release. Go embeds its standard library in your binary, so upgrading this module
+alone cannot fix vulnerabilities in an outdated Go toolchain.

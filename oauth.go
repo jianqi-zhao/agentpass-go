@@ -3,6 +3,7 @@ package agentpass
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -25,17 +26,39 @@ type AuthorizationURLParams struct {
 
 // AuthorizationURL creates the URL to which a backend should redirect a user.
 func (service *OAuthService) AuthorizationURL(params AuthorizationURLParams) (string, error) {
-	if strings.TrimSpace(params.ClientID) == "" {
+	if strings.TrimSpace(params.ClientID) == "" || strings.TrimSpace(params.ClientID) != params.ClientID {
 		return "", errors.New("agentpass: OAuth client ID is required")
 	}
 	if strings.TrimSpace(params.RedirectURI) == "" {
 		return "", errors.New("agentpass: OAuth redirect URI is required")
 	}
+	if err := validateRedirectURI(params.RedirectURI); err != nil {
+		return "", err
+	}
 	if len(params.Capabilities) == 0 {
 		return "", errors.New("agentpass: at least one capability is required")
 	}
+	seenCapabilities := make(map[string]struct{}, len(params.Capabilities))
+	for _, capability := range params.Capabilities {
+		if capability == "" || strings.TrimSpace(capability) != capability || strings.ContainsAny(capability, " \t\r\n") {
+			return "", errors.New("agentpass: capabilities must be non-empty values without whitespace")
+		}
+		if _, exists := seenCapabilities[capability]; exists {
+			return "", errors.New("agentpass: capabilities cannot contain duplicates")
+		}
+		seenCapabilities[capability] = struct{}{}
+	}
 	if params.MonthlyLimit <= 0 {
 		return "", errors.New("agentpass: monthly limit must be positive")
+	}
+	if params.State == "" {
+		return "", errors.New("agentpass: OAuth state is required")
+	}
+	if strings.TrimSpace(params.State) != params.State || !validHeaderValue(params.State) {
+		return "", errors.New("agentpass: OAuth state contains invalid characters")
+	}
+	if len(params.State) > 1024 {
+		return "", errors.New("agentpass: OAuth state cannot exceed 1024 characters")
 	}
 
 	query := url.Values{
@@ -45,10 +68,23 @@ func (service *OAuthService) AuthorizationURL(params AuthorizationURLParams) (st
 		"scope":         {strings.Join(params.Capabilities, " ")},
 		"monthly_limit": {strconv.Itoa(params.MonthlyLimit)},
 	}
-	if params.State != "" {
-		query.Set("state", params.State)
-	}
+	query.Set("state", params.State)
 	return service.client.endpoint("/oauth/authorize") + "?" + query.Encode(), nil
+}
+
+func validateRedirectURI(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return errors.New("agentpass: OAuth redirect URI must be an absolute URL")
+	}
+	if parsed.User != nil || parsed.Fragment != "" {
+		return errors.New("agentpass: OAuth redirect URI cannot contain credentials or a fragment")
+	}
+	loopbackRedirect := parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1"
+	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && loopbackRedirect) {
+		return errors.New("agentpass: OAuth redirect URI must use HTTPS except on localhost")
+	}
+	return nil
 }
 
 // ExchangeCodeParams contains confidential authorization-code exchange input.
@@ -74,11 +110,14 @@ func (service *OAuthService) ExchangeAuthorizationCode(
 	ctx context.Context,
 	params ExchangeCodeParams,
 ) (*Token, error) {
-	if strings.TrimSpace(params.Code) == "" ||
-		strings.TrimSpace(params.ClientID) == "" ||
-		strings.TrimSpace(params.ClientSecret) == "" ||
-		strings.TrimSpace(params.RedirectURI) == "" {
+	if strings.TrimSpace(params.Code) == "" || strings.TrimSpace(params.Code) != params.Code ||
+		strings.TrimSpace(params.ClientID) == "" || strings.TrimSpace(params.ClientID) != params.ClientID ||
+		strings.TrimSpace(params.ClientSecret) == "" || strings.TrimSpace(params.ClientSecret) != params.ClientSecret ||
+		strings.TrimSpace(params.RedirectURI) == "" || strings.TrimSpace(params.RedirectURI) != params.RedirectURI {
 		return nil, errors.New("agentpass: code, client ID, client secret, and redirect URI are required")
+	}
+	if err := validateRedirectURI(params.RedirectURI); err != nil {
+		return nil, err
 	}
 
 	form := url.Values{
@@ -102,6 +141,16 @@ func (service *OAuthService) ExchangeAuthorizationCode(
 	token := &Token{}
 	if err := service.client.do(request, token); err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(token.AccessToken) == "" ||
+		strings.TrimSpace(token.AccessToken) != token.AccessToken ||
+		!validHeaderValue(token.AccessToken) ||
+		!strings.EqualFold(token.TokenType, "Bearer") ||
+		token.ExpiresIn <= 0 ||
+		strings.TrimSpace(token.GrantID) == "" ||
+		strings.TrimSpace(token.GrantID) != token.GrantID ||
+		!validHeaderValue(token.GrantID) {
+		return nil, fmt.Errorf("%w: malformed OAuth token payload", ErrInvalidResponse)
 	}
 	return token, nil
 }

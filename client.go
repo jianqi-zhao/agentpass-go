@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,12 +19,13 @@ const (
 	// DefaultBaseURL is the public AgentPass API endpoint.
 	DefaultBaseURL = "https://www.prsvrc.com/agentpass"
 	// Version is the SDK version sent in the default User-Agent header.
-	Version          = "0.2.0"
+	Version          = "0.2.1"
 	maxResponseBytes = 4 << 20
 )
 
 // TokenSource returns an AgentPass access token for an outgoing request.
-// Implementations may load or refresh tokens from application-owned storage.
+// Implementations may load or refresh tokens from application-owned storage
+// and must be safe for concurrent use when shared by a Client.
 type TokenSource interface {
 	Token(context.Context) (string, error)
 }
@@ -33,6 +35,9 @@ type TokenSourceFunc func(context.Context) (string, error)
 
 // Token implements TokenSource.
 func (f TokenSourceFunc) Token(ctx context.Context) (string, error) {
+	if f == nil {
+		return "", errors.New("agentpass: token source function is nil")
+	}
 	return f(ctx)
 }
 
@@ -69,9 +74,21 @@ func WithHTTPClient(httpClient *http.Client) Option {
 // WithAccessToken configures a fixed user-scoped access token. Do not use a
 // developer client secret here.
 func WithAccessToken(accessToken string) Option {
-	return WithTokenSource(TokenSourceFunc(func(context.Context) (string, error) {
-		return accessToken, nil
-	}))
+	return func(options *clientOptions) error {
+		if accessToken == "" {
+			return errors.New("agentpass: access token cannot be empty")
+		}
+		if strings.TrimSpace(accessToken) != accessToken {
+			return errors.New("agentpass: access token cannot contain surrounding whitespace")
+		}
+		if !validHeaderValue(accessToken) {
+			return errors.New("agentpass: access token contains invalid characters")
+		}
+		options.tokenSource = TokenSourceFunc(func(context.Context) (string, error) {
+			return accessToken, nil
+		})
+		return nil
+	}
 }
 
 // WithTokenSource configures dynamic access-token lookup for each AI request.
@@ -88,15 +105,20 @@ func WithTokenSource(tokenSource TokenSource) Option {
 // WithUserAgent overrides the SDK User-Agent header.
 func WithUserAgent(userAgent string) Option {
 	return func(options *clientOptions) error {
-		if strings.TrimSpace(userAgent) == "" {
+		userAgent = strings.TrimSpace(userAgent)
+		if userAgent == "" {
 			return errors.New("agentpass: user agent cannot be empty")
+		}
+		if !validHeaderValue(userAgent) {
+			return errors.New("agentpass: user agent contains invalid characters")
 		}
 		options.userAgent = userAgent
 		return nil
 	}
 }
 
-// Client is a concurrency-safe AgentPass backend client.
+// Client is safe for concurrent use when its configured TokenSource and HTTP
+// transport are also safe for concurrent use.
 type Client struct {
 	baseURL     string
 	httpClient  *http.Client
@@ -111,9 +133,12 @@ type Client struct {
 // AgentPass deployment and the default request timeout is five minutes.
 func NewClient(options ...Option) (*Client, error) {
 	configuration := clientOptions{
-		baseURL:    DefaultBaseURL,
-		httpClient: &http.Client{Timeout: 5 * time.Minute},
-		userAgent:  "agentpass-go/" + Version,
+		baseURL: DefaultBaseURL,
+		httpClient: &http.Client{
+			Timeout:       5 * time.Minute,
+			CheckRedirect: rejectRedirect,
+		},
+		userAgent: "agentpass-go/" + Version,
 	}
 	for _, option := range options {
 		if option == nil {
@@ -128,15 +153,23 @@ func NewClient(options ...Option) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	httpClient := *configuration.httpClient
+	if httpClient.CheckRedirect == nil {
+		httpClient.CheckRedirect = rejectRedirect
+	}
 	client := &Client{
 		baseURL:     baseURL,
-		httpClient:  configuration.httpClient,
+		httpClient:  &httpClient,
 		tokenSource: configuration.tokenSource,
 		userAgent:   configuration.userAgent,
 	}
 	client.OAuth = &OAuthService{client: client}
 	client.Responses = &ResponsesService{client: client}
 	return client, nil
+}
+
+func rejectRedirect(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 func normalizeBaseURL(rawURL string) (string, error) {
@@ -147,11 +180,32 @@ func normalizeBaseURL(rawURL string) (string, error) {
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return "", fmt.Errorf("agentpass: base URL scheme must be http or https")
 	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("agentpass: base URL cannot contain user credentials")
+	}
+	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
+		return "", fmt.Errorf("agentpass: HTTP base URLs are allowed only for localhost")
+	}
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", fmt.Errorf("agentpass: base URL cannot contain a query or fragment")
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	return parsed.String(), nil
+}
+
+func isLoopbackHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
+}
+
+func validHeaderValue(value string) bool {
+	return !strings.ContainsFunc(value, func(character rune) bool {
+		return character < 0x20 || character == 0x7f
+	})
 }
 
 func (client *Client) endpoint(path string) string {
@@ -199,8 +253,14 @@ func (client *Client) authorizeRequest(ctx context.Context, request *http.Reques
 	if err != nil {
 		return fmt.Errorf("agentpass: load access token: %w", err)
 	}
-	if strings.TrimSpace(accessToken) == "" {
+	if accessToken == "" {
 		return errors.New("agentpass: token source returned an empty access token")
+	}
+	if strings.TrimSpace(accessToken) != accessToken {
+		return errors.New("agentpass: token source returned an access token with surrounding whitespace")
+	}
+	if !validHeaderValue(accessToken) {
+		return errors.New("agentpass: token source returned invalid characters")
 	}
 	request.Header.Set("Authorization", "Bearer "+accessToken)
 	return nil
@@ -218,7 +278,7 @@ func (client *Client) do(request *http.Request, output any) error {
 		return fmt.Errorf("agentpass: read response: %w", err)
 	}
 	if len(body) > maxResponseBytes {
-		return errors.New("agentpass: response exceeded 4 MiB")
+		return fmt.Errorf("%w: response exceeded 4 MiB", ErrInvalidResponse)
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return decodeAPIError(response.StatusCode, body)
@@ -227,7 +287,7 @@ func (client *Client) do(request *http.Request, output any) error {
 		return nil
 	}
 	if err := json.Unmarshal(body, output); err != nil {
-		return fmt.Errorf("agentpass: decode response: %w", err)
+		return fmt.Errorf("%w: decode JSON: %v", ErrInvalidResponse, err)
 	}
 	return nil
 }

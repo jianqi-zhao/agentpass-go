@@ -15,12 +15,12 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version-file: go.mod
+          go-version: "1.26.5"
           cache: false
       - name: Validate release
         env:
@@ -28,11 +28,15 @@ jobs:
         run: |
           [[ "$VERSION" =~ ^v0\.[0-9]+\.[0-9]+$ ]]
           test "${VERSION#v}" = "$(sed -n 's/.*Version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' client.go)"
-          ! git rev-parse "$VERSION" >/dev/null 2>&1
+          if git show-ref --verify --quiet "refs/tags/$VERSION"; then
+            test "$(git rev-list -n 1 "$VERSION")" = "$GITHUB_SHA"
+          fi
           go mod tidy
           git diff --exit-code -- go.mod go.sum
           go test -race ./...
           go vet ./...
+          test -f LICENSE
+          go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
       - name: Create immutable tag and GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -40,9 +44,13 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git tag -a "$VERSION" -m "AgentPass Go SDK $VERSION"
-          git push origin "$VERSION"
-          gh release create "$VERSION" --verify-tag --generate-notes --title "AgentPass Go SDK $VERSION"
+          if ! git show-ref --verify --quiet "refs/tags/$VERSION"; then
+            git tag -a "$VERSION" -m "AgentPass Go SDK $VERSION"
+            git push origin "$VERSION"
+          fi
+          if ! gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release create "$VERSION" --verify-tag --generate-notes --title "AgentPass Go SDK $VERSION"
+          fi
       - name: Verify the public module
         env:
           VERSION: ${{ inputs.version }}

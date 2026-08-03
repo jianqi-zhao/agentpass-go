@@ -2,8 +2,13 @@ package agentpass
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 )
+
+// ErrInvalidResponse identifies a successful HTTP response that does not
+// satisfy the AgentPass protocol contract.
+var ErrInvalidResponse = errors.New("agentpass: invalid API response")
 
 // APIError is returned when AgentPass rejects an API request.
 type APIError struct {

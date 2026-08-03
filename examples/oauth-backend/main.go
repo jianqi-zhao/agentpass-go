@@ -121,10 +121,6 @@ func (app *application) connect(response http.ResponseWriter, request *http.Requ
 }
 
 func (app *application) callback(response http.ResponseWriter, request *http.Request) {
-	if oauthError := request.URL.Query().Get("error"); oauthError != "" {
-		render(response, map[string]any{"Error": "AgentPass authorization failed: " + oauthError})
-		return
-	}
 	state, err := request.Cookie(stateCookie)
 	receivedState := request.URL.Query().Get("state")
 	if err != nil || receivedState == "" || subtle.ConstantTimeCompare([]byte(state.Value), []byte(receivedState)) != 1 {
@@ -132,6 +128,10 @@ func (app *application) callback(response http.ResponseWriter, request *http.Req
 		return
 	}
 	app.setCookie(response, &http.Cookie{Name: stateCookie, Path: "/callback", MaxAge: -1})
+	if oauthError := request.URL.Query().Get("error"); oauthError != "" {
+		render(response, map[string]any{"Error": "AgentPass authorization failed: " + oauthError})
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(request.Context(), 30*time.Second)
 	defer cancel()

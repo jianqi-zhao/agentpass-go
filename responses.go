@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // ResponsesService calls AgentPass's metered AI gateway.
@@ -63,14 +65,24 @@ func (service *ResponsesService) Create(
 	ctx context.Context,
 	params CreateResponseParams,
 ) (*Response, error) {
-	if strings.TrimSpace(params.Capability) == "" {
+	if strings.TrimSpace(params.Capability) == "" ||
+		strings.TrimSpace(params.Capability) != params.Capability ||
+		strings.ContainsAny(params.Capability, " \t\r\n") {
 		return nil, errors.New("agentpass: capability is required")
 	}
 	if strings.TrimSpace(params.Input) == "" {
 		return nil, errors.New("agentpass: input is required")
 	}
+	if params.MaxCredits < 0 {
+		return nil, errors.New("agentpass: max credits cannot be negative")
+	}
 	if len(params.IdempotencyKey) > 200 {
 		return nil, errors.New("agentpass: idempotency key cannot exceed 200 characters")
+	}
+	if params.IdempotencyKey != "" &&
+		(strings.TrimSpace(params.IdempotencyKey) != params.IdempotencyKey ||
+			!validHeaderValue(params.IdempotencyKey)) {
+		return nil, errors.New("agentpass: idempotency key contains invalid characters")
 	}
 
 	idempotencyKey := params.IdempotencyKey
@@ -95,7 +107,40 @@ func (service *ResponsesService) Create(
 	if err := service.client.do(request, response); err != nil {
 		return nil, err
 	}
+	if err := validateResponse(response, params.Capability); err != nil {
+		return nil, err
+	}
 	return response, nil
+}
+
+func validateResponse(response *Response, capability string) error {
+	if strings.TrimSpace(response.ID) == "" ||
+		response.Object != "agentpass.response" ||
+		strings.TrimSpace(response.Model) == "" ||
+		strings.TrimSpace(response.OutputText) == "" {
+		return fmt.Errorf("%w: missing response identity or output", ErrInvalidResponse)
+	}
+	receipt := response.AgentPass.Receipt
+	if receipt.RequestID != response.ID ||
+		strings.TrimSpace(receipt.App) == "" ||
+		receipt.Capability != capability ||
+		receipt.CreditsUsed <= 0 ||
+		receipt.RemainingCredits < 0 ||
+		strings.TrimSpace(receipt.SettledAt) == "" {
+		return fmt.Errorf("%w: malformed settlement receipt", ErrInvalidResponse)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, receipt.SettledAt); err != nil {
+		return fmt.Errorf("%w: malformed settlement timestamp", ErrInvalidResponse)
+	}
+	usage := response.Usage
+	if usage.InputTokens <= 0 || usage.CachedInputTokens < 0 ||
+		usage.OutputTokens <= 0 || usage.ReasoningTokens < 0 ||
+		usage.TotalTokens <= 0 || usage.InputCharacters < 0 || usage.OutputCharacters < 0 ||
+		usage.CachedInputTokens > usage.InputTokens || usage.ReasoningTokens > usage.OutputTokens ||
+		usage.TotalTokens < usage.InputTokens+usage.OutputTokens {
+		return fmt.Errorf("%w: malformed token usage", ErrInvalidResponse)
+	}
+	return nil
 }
 
 // NewIdempotencyKey returns a UUID-shaped cryptographically random request key.
