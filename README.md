@@ -84,3 +84,7 @@ go vet ./...
 Build production applications with a currently supported, fully patched Go
 release. Go embeds its standard library in your binary, so upgrading this module
 alone cannot fix vulnerabilities in an outdated Go toolchain.
+
+## License
+
+AgentPass Go SDK is licensed under the Apache License 2.0.

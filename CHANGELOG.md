@@ -7,6 +7,7 @@ versioning while its public API remains pre-1.0.
 
 ## v0.2.1 - 2026-08-03
 
+- License the public SDK under Apache-2.0.
 - Reject insecure remote HTTP endpoints and credential-bearing base URLs.
 - Validate successful OAuth tokens, AI responses, receipts, token usage, and
   settlement timestamps before returning them to application code.
