@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -19,10 +20,10 @@ type ResponsesService struct {
 // CreateResponseParams describes an AI request. MaxCredits is omitted when it
 // is zero. Set IdempotencyKey yourself when a job may be retried after restart.
 type CreateResponseParams struct {
-	Capability     string `json:"capability"`
-	Input          string `json:"input"`
-	MaxCredits     int    `json:"max_credits,omitempty"`
-	IdempotencyKey string `json:"-"`
+	Capability     string  `json:"capability"`
+	Input          string  `json:"input"`
+	MaxCredits     float64 `json:"max_credits,omitempty"`
+	IdempotencyKey string  `json:"-"`
 }
 
 // Usage reports provider-normalized token usage. Character fields remain for
@@ -39,12 +40,13 @@ type Usage struct {
 
 // Receipt is AgentPass's authoritative settled metering record.
 type Receipt struct {
-	RequestID        string `json:"request_id"`
-	App              string `json:"app"`
-	Capability       string `json:"capability"`
-	CreditsUsed      int    `json:"credits_used"`
-	RemainingCredits int    `json:"remaining_credits"`
-	SettledAt        string `json:"settled_at"`
+	RequestID        string  `json:"request_id"`
+	App              string  `json:"app"`
+	Capability       string  `json:"capability"`
+	CreditsReserved  float64 `json:"credits_reserved"`
+	CreditsUsed      float64 `json:"credits_used"`
+	RemainingCredits float64 `json:"remaining_credits"`
+	SettledAt        string  `json:"settled_at"`
 }
 
 // Response is a normalized AI result with its settled AgentPass receipt.
@@ -73,8 +75,8 @@ func (service *ResponsesService) Create(
 	if strings.TrimSpace(params.Input) == "" {
 		return nil, errors.New("agentpass: input is required")
 	}
-	if params.MaxCredits < 0 {
-		return nil, errors.New("agentpass: max credits cannot be negative")
+	if !validCreditValue(params.MaxCredits, true) {
+		return nil, errors.New("agentpass: max credits must be non-negative with at most two decimal places")
 	}
 	if len(params.IdempotencyKey) > 200 {
 		return nil, errors.New("agentpass: idempotency key cannot exceed 200 characters")
@@ -113,6 +115,14 @@ func (service *ResponsesService) Create(
 	return response, nil
 }
 
+func validCreditValue(value float64, allowZero bool) bool {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || (!allowZero && value == 0) {
+		return false
+	}
+	return math.Abs(value*100) <= 9_007_199_254_740_991 &&
+		math.Abs(value*100-math.Round(value*100)) < 1e-8
+}
+
 func validateResponse(response *Response, capability string) error {
 	if strings.TrimSpace(response.ID) == "" ||
 		response.Object != "agentpass.response" ||
@@ -124,8 +134,10 @@ func validateResponse(response *Response, capability string) error {
 	if receipt.RequestID != response.ID ||
 		strings.TrimSpace(receipt.App) == "" ||
 		receipt.Capability != capability ||
-		receipt.CreditsUsed <= 0 ||
-		receipt.RemainingCredits < 0 ||
+		!validCreditValue(receipt.CreditsReserved, false) ||
+		!validCreditValue(receipt.CreditsUsed, false) ||
+		receipt.CreditsUsed > receipt.CreditsReserved ||
+		!validCreditValue(receipt.RemainingCredits, true) ||
 		strings.TrimSpace(receipt.SettledAt) == "" {
 		return fmt.Errorf("%w: malformed settlement receipt", ErrInvalidResponse)
 	}

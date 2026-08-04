@@ -12,6 +12,9 @@ The AgentPass Go SDK is a dependency-free backend helper for:
 
 The SDK does not meter locally. AgentPass reserves and settles credits in its
 transactional ledger, then returns the authoritative receipt.
+Credits use one public denomination throughout AgentPass and support up to two
+decimal places. For example, `0.25` means one quarter of one credit; SDK values
+are never scaled or converted to another unit.
 
 ## Install
 

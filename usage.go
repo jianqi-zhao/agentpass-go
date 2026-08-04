@@ -3,6 +3,7 @@ package agentpass
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -16,12 +17,12 @@ type UsageService struct {
 // UsagePeriod is one calendar quota period. Used credits are settled charges;
 // Reserved credits belong to in-flight requests; Remaining accounts for both.
 type UsagePeriod struct {
-	StartsAt  string `json:"starts_at"`
-	EndsAt    string `json:"ends_at"`
-	Limit     int    `json:"limit"`
-	Used      int    `json:"used"`
-	Reserved  int    `json:"reserved"`
-	Remaining int    `json:"remaining"`
+	StartsAt  string  `json:"starts_at"`
+	EndsAt    string  `json:"ends_at"`
+	Limit     float64 `json:"limit"`
+	Used      float64 `json:"used"`
+	Reserved  float64 `json:"reserved"`
+	Remaining float64 `json:"remaining"`
 }
 
 // UsageSummary contains only usage for the grant represented by the access
@@ -74,8 +75,11 @@ func validateUsageSummary(summary *UsageSummary) error {
 			expectedRemaining = 0
 		}
 		if startErr != nil || endErr != nil || !startsAt.Before(endsAt) ||
-			period.Limit <= 0 || period.Used < 0 || period.Reserved < 0 ||
-			period.Remaining != expectedRemaining {
+			!validCreditValue(period.Limit, false) ||
+			!validCreditValue(period.Used, true) ||
+			!validCreditValue(period.Reserved, true) ||
+			!validCreditValue(period.Remaining, true) ||
+			math.Abs(period.Remaining-expectedRemaining) > 1e-8 {
 			return fmt.Errorf("%w: malformed usage period", ErrInvalidResponse)
 		}
 	}

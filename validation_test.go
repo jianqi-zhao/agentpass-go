@@ -14,7 +14,7 @@ import (
 const validResponseJSON = `{
 	"id":"request_123","object":"agentpass.response","model":"fast-model",
 	"output_text":"done","usage":{"inputTokens":12,"cachedInputTokens":3,"outputTokens":4,"reasoningTokens":2,"totalTokens":16},
-	"agentpass":{"receipt":{"request_id":"request_123","app":"Draftly","capability":"text.fast","credits_used":3,"remaining_credits":997,"settled_at":"2026-08-03T00:00:00Z"}}
+	"agentpass":{"receipt":{"request_id":"request_123","app":"Draftly","capability":"text.fast","credits_reserved":0.3,"credits_used":0.03,"remaining_credits":9.97,"settled_at":"2026-08-03T00:00:00Z"}}
 }`
 
 func TestBaseURLTransportRules(t *testing.T) {
@@ -156,7 +156,7 @@ func TestAuthorizationURLRejectsInvalidInputs(t *testing.T) {
 		ClientID:     "client_123",
 		RedirectURI:  "https://app.example/callback",
 		Capabilities: []string{"text.fast"},
-		MonthlyLimit: 100,
+		MonthlyLimit: 10,
 		State:        "state",
 	}
 	tests := []struct {
@@ -182,7 +182,9 @@ func TestAuthorizationURLRejectsInvalidInputs(t *testing.T) {
 			params.DefaultModel = "anthropic:claude"
 		}},
 		{"negative weekly limit", func(params *agentpass.AuthorizationURLParams) { params.WeeklyLimit = -1 }},
-		{"weekly above monthly", func(params *agentpass.AuthorizationURLParams) { params.WeeklyLimit = 101 }},
+		{"weekly above monthly", func(params *agentpass.AuthorizationURLParams) { params.WeeklyLimit = 10.01 }},
+		{"fractional monthly precision", func(params *agentpass.AuthorizationURLParams) { params.MonthlyLimit = 1.001 }},
+		{"fractional weekly precision", func(params *agentpass.AuthorizationURLParams) { params.WeeklyLimit = 1.001 }},
 		{"missing state", func(params *agentpass.AuthorizationURLParams) { params.State = "" }},
 		{"oversized state", func(params *agentpass.AuthorizationURLParams) { params.State = strings.Repeat("a", 1025) }},
 	}
@@ -235,6 +237,7 @@ func TestCreateRejectsInvalidRequestLimitsAndKeys(t *testing.T) {
 	for _, params := range []agentpass.CreateResponseParams{
 		{Capability: " text.fast", Input: "Hello"},
 		{Capability: "text.fast", Input: "Hello", MaxCredits: -1},
+		{Capability: "text.fast", Input: "Hello", MaxCredits: 0.001},
 		{Capability: "text.fast", Input: "Hello", IdempotencyKey: " key"},
 		{Capability: "text.fast", Input: "Hello", IdempotencyKey: "key\tforged"},
 	} {

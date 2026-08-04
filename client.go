@@ -19,7 +19,7 @@ const (
 	// DefaultBaseURL is the public AgentPass API endpoint.
 	DefaultBaseURL = "https://www.prsvrc.com/agentpass"
 	// Version is the SDK version sent in the default User-Agent header.
-	Version          = "0.4.0"
+	Version          = "0.5.0"
 	maxResponseBytes = 4 << 20
 )
 

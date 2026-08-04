@@ -5,6 +5,12 @@ versioning while its public API remains pre-1.0.
 
 ## Unreleased
 
+## v0.5.0 - 2026-08-04
+
+- Use the single public credit denomination for OAuth limits, usage summaries,
+  request ceilings, and receipts, with up to two decimal places.
+- Add reserved credits to the typed legacy settlement receipt.
+
 ## v0.4.0 - 2026-08-04
 
 - Add `Client.Usage.Current` for grant-scoped calendar-week and calendar-month

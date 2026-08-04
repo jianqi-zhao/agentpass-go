@@ -116,8 +116,8 @@ func (app *application) connect(response http.ResponseWriter, request *http.Requ
 		ClientID: app.clientID, RedirectURI: app.redirectURI,
 		Capabilities: []string{"ai.inference"},
 		Models:       []string{"openai:gpt-5.6-sol"},
-		DefaultModel: "openai:gpt-5.6-sol", MonthlyLimit: 1_000,
-		WeeklyLimit: 250, State: state,
+		DefaultModel: "openai:gpt-5.6-sol", MonthlyLimit: 10,
+		WeeklyLimit: 2.5, State: state,
 	})
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusInternalServerError)
@@ -211,7 +211,7 @@ func (app *application) generate(response http.ResponseWriter, request *http.Req
 	providerRequest.Header.Set("Authorization", "Bearer "+current.accessToken)
 	providerRequest.Header.Set("Content-Type", "application/json")
 	providerRequest.Header.Set("Idempotency-Key", idempotencyKey)
-	providerRequest.Header.Set("X-AgentPass-Max-Credits", "40")
+	providerRequest.Header.Set("X-AgentPass-Max-Credits", "0.4")
 	providerResponse, err := http.DefaultClient.Do(providerRequest)
 	if err != nil {
 		render(response, map[string]any{"Connected": true, "Input": input, "Error": err.Error()})

@@ -25,8 +25,8 @@ type AuthorizationURLParams struct {
 	Capabilities []string
 	Models       []string
 	DefaultModel string
-	MonthlyLimit int
-	WeeklyLimit  int
+	MonthlyLimit float64
+	WeeklyLimit  float64
 	State        string
 }
 
@@ -69,11 +69,11 @@ func (service *OAuthService) AuthorizationURL(params AuthorizationURLParams) (st
 			return "", errors.New("agentpass: default model must be one of the requested models")
 		}
 	}
-	if params.MonthlyLimit <= 0 {
-		return "", errors.New("agentpass: monthly limit must be positive")
+	if !validCreditValue(params.MonthlyLimit, false) {
+		return "", errors.New("agentpass: monthly limit must be positive with at most two decimal places")
 	}
-	if params.WeeklyLimit < 0 || params.WeeklyLimit > params.MonthlyLimit {
-		return "", errors.New("agentpass: weekly limit cannot be negative or exceed the monthly limit")
+	if !validCreditValue(params.WeeklyLimit, true) || params.WeeklyLimit > params.MonthlyLimit {
+		return "", errors.New("agentpass: weekly limit must use at most two decimal places and cannot be negative or exceed the monthly limit")
 	}
 	if params.State == "" {
 		return "", errors.New("agentpass: OAuth state is required")
@@ -90,11 +90,11 @@ func (service *OAuthService) AuthorizationURL(params AuthorizationURLParams) (st
 		"client_id":     {params.ClientID},
 		"redirect_uri":  {params.RedirectURI},
 		"scope":         {strings.Join(params.Capabilities, " ")},
-		"monthly_limit": {strconv.Itoa(params.MonthlyLimit)},
+		"monthly_limit": {strconv.FormatFloat(params.MonthlyLimit, 'f', -1, 64)},
 	}
 	query.Set("state", params.State)
 	if params.WeeklyLimit > 0 {
-		query.Set("weekly_limit", strconv.Itoa(params.WeeklyLimit))
+		query.Set("weekly_limit", strconv.FormatFloat(params.WeeklyLimit, 'f', -1, 64))
 	}
 	for _, model := range params.Models {
 		query.Add("model", model)

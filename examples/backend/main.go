@@ -64,7 +64,7 @@ func main() {
 	request.Header.Set("Authorization", "Bearer "+accessToken)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Idempotency-Key", idempotencyKey)
-	request.Header.Set("X-AgentPass-Max-Credits", "40")
+	request.Header.Set("X-AgentPass-Max-Credits", "0.4")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		fail(err)

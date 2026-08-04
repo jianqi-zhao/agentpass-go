@@ -50,8 +50,8 @@ func TestAuthorizationURL(t *testing.T) {
 		Capabilities: []string{"text.fast", "text.smart"},
 		Models:       []string{"openai:gpt-5.6-sol"},
 		DefaultModel: "openai:gpt-5.6-sol",
-		MonthlyLimit: 250,
-		WeeklyLimit:  75,
+		MonthlyLimit: 10,
+		WeeklyLimit:  2.5,
 		State:        "signed-state",
 	})
 	if err != nil {
@@ -70,7 +70,7 @@ func TestAuthorizationURL(t *testing.T) {
 	if parsed.Query().Get("model") != "openai:gpt-5.6-sol" || parsed.Query().Get("default_model") != "openai:gpt-5.6-sol" {
 		t.Fatalf("unexpected model query: %s", parsed.RawQuery)
 	}
-	if parsed.Query().Get("weekly_limit") != "75" {
+	if parsed.Query().Get("weekly_limit") != "2.5" {
 		t.Fatalf("unexpected weekly limit: %s", parsed.RawQuery)
 	}
 }
@@ -86,8 +86,8 @@ func TestCurrentUsage(t *testing.T) {
 		_, _ = io.WriteString(response, `{
 			"object":"agentpass.usage","grant_id":"grant_123",
 			"app":{"client_id":"client_123","name":"Enjoy Life"},
-			"week":{"starts_at":"2026-08-03T00:00:00Z","ends_at":"2026-08-10T00:00:00Z","limit":100,"used":21,"reserved":4,"remaining":75},
-			"month":{"starts_at":"2026-08-01T00:00:00Z","ends_at":"2026-09-01T00:00:00Z","limit":300,"used":51,"reserved":4,"remaining":245},
+			"week":{"starts_at":"2026-08-03T00:00:00Z","ends_at":"2026-08-10T00:00:00Z","limit":2.5,"used":0.21,"reserved":0.04,"remaining":2.25},
+			"month":{"starts_at":"2026-08-01T00:00:00Z","ends_at":"2026-09-01T00:00:00Z","limit":10,"used":0.51,"reserved":0.04,"remaining":9.45},
 			"updated_at":"2026-08-04T12:00:00Z"
 		}`)
 	}, agentpass.WithAccessToken("ap_test"))
@@ -96,7 +96,7 @@ func TestCurrentUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if usage.App.Name != "Enjoy Life" || usage.Week.Limit != 100 || usage.Week.Used != 21 || usage.Week.Remaining != 75 {
+	if usage.App.Name != "Enjoy Life" || usage.Week.Limit != 2.5 || usage.Week.Used != 0.21 || usage.Week.Remaining != 2.25 {
 		t.Fatalf("unexpected usage summary: %+v", usage)
 	}
 }
@@ -185,27 +185,27 @@ func TestCreateResponseSendsAuthenticationAndIdempotency(t *testing.T) {
 		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 			t.Fatal(err)
 		}
-		if payload["capability"] != "text.fast" || payload["max_credits"] != float64(30) {
+		if payload["capability"] != "text.fast" || payload["max_credits"] != float64(0.3) {
 			t.Errorf("unexpected payload: %v", payload)
 		}
 		response.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(response, `{
 			"id":"request_123","object":"agentpass.response","model":"fast-model",
 			"output_text":"done","usage":{"inputTokens":12,"cachedInputTokens":3,"outputTokens":4,"reasoningTokens":2,"totalTokens":16},
-			"agentpass":{"receipt":{"request_id":"request_123","app":"Draftly","capability":"text.fast","credits_used":3,"remaining_credits":997,"settled_at":"2026-08-03T00:00:00.000Z"}}
+			"agentpass":{"receipt":{"request_id":"request_123","app":"Draftly","capability":"text.fast","credits_reserved":0.3,"credits_used":0.03,"remaining_credits":9.97,"settled_at":"2026-08-03T00:00:00.000Z"}}
 		}`)
 	}, agentpass.WithAccessToken("ap_test"))
 
 	result, err := client.Responses.Create(context.Background(), agentpass.CreateResponseParams{
 		Capability:     "text.fast",
 		Input:          "Write a title",
-		MaxCredits:     30,
+		MaxCredits:     0.3,
 		IdempotencyKey: "job-42",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.OutputText != "done" || result.AgentPass.Receipt.CreditsUsed != 3 || result.Usage.TotalTokens != 16 {
+	if result.OutputText != "done" || result.AgentPass.Receipt.CreditsUsed != 0.03 || result.Usage.TotalTokens != 16 {
 		t.Fatalf("unexpected response: %+v", result)
 	}
 }
@@ -218,7 +218,7 @@ func TestCreateResponseGeneratesIdempotencyKey(t *testing.T) {
 		_, _ = io.WriteString(response, `{
 			"id":"request_generated","object":"agentpass.response","model":"fast-model",
 			"output_text":"done","usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2},
-			"agentpass":{"receipt":{"request_id":"request_generated","app":"Draftly","capability":"text.fast","credits_used":1,"remaining_credits":99,"settled_at":"2026-08-03T00:00:00Z"}}
+			"agentpass":{"receipt":{"request_id":"request_generated","app":"Draftly","capability":"text.fast","credits_reserved":0.1,"credits_used":0.01,"remaining_credits":9.99,"settled_at":"2026-08-03T00:00:00Z"}}
 		}`)
 	}, agentpass.WithAccessToken("ap_test"))
 	if _, err := client.Responses.Create(context.Background(), agentpass.CreateResponseParams{
