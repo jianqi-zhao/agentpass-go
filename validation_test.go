@@ -175,6 +175,12 @@ func TestAuthorizationURLRejectsInvalidInputs(t *testing.T) {
 			params.Capabilities = []string{"text.fast", "text.fast"}
 		}},
 		{"capability whitespace", func(params *agentpass.AuthorizationURLParams) { params.Capabilities = []string{"text.fast smart"} }},
+		{"unqualified model", func(params *agentpass.AuthorizationURLParams) { params.Models = []string{"gpt-5.6-sol"} }},
+		{"unknown model provider", func(params *agentpass.AuthorizationURLParams) { params.Models = []string{"other:model"} }},
+		{"default outside models", func(params *agentpass.AuthorizationURLParams) {
+			params.Models = []string{"openai:gpt-5.6-sol"}
+			params.DefaultModel = "anthropic:claude"
+		}},
 		{"missing state", func(params *agentpass.AuthorizationURLParams) { params.State = "" }},
 		{"oversized state", func(params *agentpass.AuthorizationURLParams) { params.State = strings.Repeat("a", 1025) }},
 	}

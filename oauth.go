@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 )
+
+var modelKeyPattern = regexp.MustCompile(`^(openai|anthropic):[A-Za-z0-9._:/-]+$`)
 
 // OAuthService exposes the confidential backend portion of AgentPass OAuth.
 type OAuthService struct {
@@ -20,6 +23,8 @@ type AuthorizationURLParams struct {
 	ClientID     string
 	RedirectURI  string
 	Capabilities []string
+	Models       []string
+	DefaultModel string
 	MonthlyLimit int
 	State        string
 }
@@ -48,6 +53,21 @@ func (service *OAuthService) AuthorizationURL(params AuthorizationURLParams) (st
 		}
 		seenCapabilities[capability] = struct{}{}
 	}
+	seenModels := make(map[string]struct{}, len(params.Models))
+	for _, model := range params.Models {
+		if !modelKeyPattern.MatchString(model) {
+			return "", errors.New("agentpass: models must be provider-qualified openai:model or anthropic:model values")
+		}
+		if _, exists := seenModels[model]; exists {
+			return "", errors.New("agentpass: models cannot contain duplicates")
+		}
+		seenModels[model] = struct{}{}
+	}
+	if params.DefaultModel != "" {
+		if _, allowed := seenModels[params.DefaultModel]; !allowed {
+			return "", errors.New("agentpass: default model must be one of the requested models")
+		}
+	}
 	if params.MonthlyLimit <= 0 {
 		return "", errors.New("agentpass: monthly limit must be positive")
 	}
@@ -69,6 +89,12 @@ func (service *OAuthService) AuthorizationURL(params AuthorizationURLParams) (st
 		"monthly_limit": {strconv.Itoa(params.MonthlyLimit)},
 	}
 	query.Set("state", params.State)
+	for _, model := range params.Models {
+		query.Add("model", model)
+	}
+	if params.DefaultModel != "" {
+		query.Set("default_model", params.DefaultModel)
+	}
 	return service.client.endpoint("/oauth/authorize") + "?" + query.Encode(), nil
 }
 
@@ -98,10 +124,18 @@ type ExchangeCodeParams struct {
 
 // Token is an opaque user-scoped AgentPass access token.
 type Token struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int    `json:"expires_in"`
-	GrantID     string `json:"grant_id"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	GrantID      string `json:"grant_id"`
+}
+
+// RefreshTokenParams contains confidential refresh-token exchange input.
+type RefreshTokenParams struct {
+	RefreshToken string
+	ClientID     string
+	ClientSecret string
 }
 
 // ExchangeAuthorizationCode exchanges a one-time code from the callback for an
@@ -142,15 +176,65 @@ func (service *OAuthService) ExchangeAuthorizationCode(
 	if err := service.client.do(request, token); err != nil {
 		return nil, err
 	}
+	if err := validateToken(token); err != nil {
+		return nil, err
+	}
+	return token, nil
+}
+
+// RefreshAccessToken rotates a refresh token and returns a new access/refresh
+// token pair. Persist the replacement before discarding the previous value.
+func (service *OAuthService) RefreshAccessToken(
+	ctx context.Context,
+	params RefreshTokenParams,
+) (*Token, error) {
+	if strings.TrimSpace(params.RefreshToken) == "" ||
+		strings.TrimSpace(params.RefreshToken) != params.RefreshToken ||
+		strings.TrimSpace(params.ClientID) == "" ||
+		strings.TrimSpace(params.ClientID) != params.ClientID ||
+		strings.TrimSpace(params.ClientSecret) == "" ||
+		strings.TrimSpace(params.ClientSecret) != params.ClientSecret {
+		return nil, errors.New("agentpass: refresh token, client ID, and client secret are required")
+	}
+	form := url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {params.RefreshToken},
+		"client_id":     {params.ClientID},
+		"client_secret": {params.ClientSecret},
+	}
+	request, err := service.client.newRequest(
+		ctx,
+		http.MethodPost,
+		"/oauth/token",
+		strings.NewReader(form.Encode()),
+	)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	token := &Token{}
+	if err := service.client.do(request, token); err != nil {
+		return nil, err
+	}
+	if err := validateToken(token); err != nil {
+		return nil, err
+	}
+	return token, nil
+}
+
+func validateToken(token *Token) error {
 	if strings.TrimSpace(token.AccessToken) == "" ||
 		strings.TrimSpace(token.AccessToken) != token.AccessToken ||
 		!validHeaderValue(token.AccessToken) ||
+		strings.TrimSpace(token.RefreshToken) == "" ||
+		strings.TrimSpace(token.RefreshToken) != token.RefreshToken ||
+		!validHeaderValue(token.RefreshToken) ||
 		!strings.EqualFold(token.TokenType, "Bearer") ||
 		token.ExpiresIn <= 0 ||
 		strings.TrimSpace(token.GrantID) == "" ||
 		strings.TrimSpace(token.GrantID) != token.GrantID ||
 		!validHeaderValue(token.GrantID) {
-		return nil, fmt.Errorf("%w: malformed OAuth token payload", ErrInvalidResponse)
+		return fmt.Errorf("%w: malformed OAuth token payload", ErrInvalidResponse)
 	}
-	return token, nil
+	return nil
 }

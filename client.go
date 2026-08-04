@@ -19,7 +19,7 @@ const (
 	// DefaultBaseURL is the public AgentPass API endpoint.
 	DefaultBaseURL = "https://www.prsvrc.com/agentpass"
 	// Version is the SDK version sent in the default User-Agent header.
-	Version          = "0.2.1"
+	Version          = "0.3.0"
 	maxResponseBytes = 4 << 20
 )
 
@@ -28,6 +28,24 @@ const (
 // and must be safe for concurrent use when shared by a Client.
 type TokenSource interface {
 	Token(context.Context) (string, error)
+}
+
+// OpenAIBaseURL returns the base URL for standard OpenAI SDK clients.
+func OpenAIBaseURL(agentPassBaseURL string) (string, error) {
+	baseURL, err := normalizeBaseURL(agentPassBaseURL)
+	if err != nil {
+		return "", err
+	}
+	return baseURL + "/openai/v1", nil
+}
+
+// AnthropicBaseURL returns the base URL for standard Anthropic SDK clients.
+func AnthropicBaseURL(agentPassBaseURL string) (string, error) {
+	baseURL, err := normalizeBaseURL(agentPassBaseURL)
+	if err != nil {
+		return "", err
+	}
+	return baseURL + "/anthropic", nil
 }
 
 // TokenSourceFunc adapts a function into a TokenSource.

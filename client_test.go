@@ -48,6 +48,8 @@ func TestAuthorizationURL(t *testing.T) {
 		ClientID:     "client_123",
 		RedirectURI:  "https://app.example/callback",
 		Capabilities: []string{"text.fast", "text.smart"},
+		Models:       []string{"openai:gpt-5.6-sol"},
+		DefaultModel: "openai:gpt-5.6-sol",
 		MonthlyLimit: 250,
 		State:        "signed-state",
 	})
@@ -63,6 +65,9 @@ func TestAuthorizationURL(t *testing.T) {
 	}
 	if parsed.Query().Get("scope") != "text.fast text.smart" || parsed.Query().Get("state") != "signed-state" {
 		t.Fatalf("unexpected authorization query: %s", parsed.RawQuery)
+	}
+	if parsed.Query().Get("model") != "openai:gpt-5.6-sol" || parsed.Query().Get("default_model") != "openai:gpt-5.6-sol" {
+		t.Fatalf("unexpected model query: %s", parsed.RawQuery)
 	}
 }
 
@@ -81,7 +86,7 @@ func TestExchangeAuthorizationCode(t *testing.T) {
 			t.Errorf("unexpected form: %v", request.Form)
 		}
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(response, `{"access_token":"ap_token","token_type":"Bearer","expires_in":3600,"grant_id":"grant_123"}`)
+		_, _ = io.WriteString(response, `{"access_token":"ap_token","refresh_token":"refresh_token","token_type":"Bearer","expires_in":3600,"grant_id":"grant_123"}`)
 	})
 
 	token, err := client.OAuth.ExchangeAuthorizationCode(context.Background(), agentpass.ExchangeCodeParams{
@@ -93,8 +98,45 @@ func TestExchangeAuthorizationCode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if token.AccessToken != "ap_token" || token.GrantID != "grant_123" {
+	if token.AccessToken != "ap_token" || token.RefreshToken != "refresh_token" || token.GrantID != "grant_123" {
 		t.Fatalf("unexpected token: %+v", token)
+	}
+}
+
+func TestRefreshAccessToken(t *testing.T) {
+	client := newTestClient(t, func(response http.ResponseWriter, request *http.Request) {
+		if err := request.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if request.Form.Get("grant_type") != "refresh_token" || request.Form.Get("refresh_token") != "refresh_old" {
+			t.Fatalf("unexpected refresh form: %v", request.Form)
+		}
+		_, _ = io.WriteString(response, `{"access_token":"ap_new","refresh_token":"refresh_new","token_type":"Bearer","expires_in":3600,"grant_id":"grant_123"}`)
+	})
+	token, err := client.OAuth.RefreshAccessToken(context.Background(), agentpass.RefreshTokenParams{
+		RefreshToken: "refresh_old",
+		ClientID:     "client_123",
+		ClientSecret: "server-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token.AccessToken != "ap_new" || token.RefreshToken != "refresh_new" {
+		t.Fatalf("unexpected refreshed token: %+v", token)
+	}
+}
+
+func TestProviderBaseURLs(t *testing.T) {
+	openAI, err := agentpass.OpenAIBaseURL("https://example.test/agentpass/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	anthropic, err := agentpass.AnthropicBaseURL("https://example.test/agentpass/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if openAI != "https://example.test/agentpass/openai/v1" || anthropic != "https://example.test/agentpass/anthropic" {
+		t.Fatalf("unexpected provider base URLs: %s %s", openAI, anthropic)
 	}
 }
 

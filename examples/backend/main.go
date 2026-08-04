@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"time"
 
@@ -17,11 +20,11 @@ func main() {
 		os.Exit(2)
 	}
 
-	options := []agentpass.Option{agentpass.WithAccessToken(accessToken)}
-	if baseURL := os.Getenv("AGENTPASS_BASE_URL"); baseURL != "" {
-		options = append(options, agentpass.WithBaseURL(baseURL))
+	baseURL := os.Getenv("AGENTPASS_BASE_URL")
+	if baseURL == "" {
+		baseURL = agentpass.DefaultBaseURL
 	}
-	client, err := agentpass.NewClient(options...)
+	providerURL, err := agentpass.OpenAIBaseURL(baseURL)
 	if err != nil {
 		fail(err)
 	}
@@ -40,16 +43,51 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	result, err := client.Responses.Create(ctx, agentpass.CreateResponseParams{
-		Capability:     "text.fast",
-		Input:          input,
-		MaxCredits:     30,
-		IdempotencyKey: idempotencyKey,
+	payload, err := json.Marshal(map[string]any{
+		"model":             "gpt-5.6-sol",
+		"input":             input,
+		"reasoning":         map[string]string{"effort": "medium"},
+		"max_output_tokens": 600,
 	})
 	if err != nil {
 		fail(err)
 	}
-	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		providerURL+"/responses",
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		fail(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", idempotencyKey)
+	request.Header.Set("X-AgentPass-Max-Credits", "40")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		fail(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	if err != nil {
+		fail(err)
+	}
+	if response.StatusCode != http.StatusOK {
+		fail(fmt.Errorf("AgentPass returned HTTP %d: %s", response.StatusCode, body))
+	}
+	var result any
+	if err := json.Unmarshal(body, &result); err != nil {
+		fail(err)
+	}
+	output := map[string]any{
+		"response":          result,
+		"request_id":        response.Header.Get("X-AgentPass-Request-Id"),
+		"credits_used":      response.Header.Get("X-AgentPass-Credits-Used"),
+		"credits_remaining": response.Header.Get("X-AgentPass-Credits-Remaining"),
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(output); err != nil {
 		fail(err)
 	}
 }

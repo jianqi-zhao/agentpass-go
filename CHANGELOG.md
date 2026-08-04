@@ -5,6 +5,15 @@ versioning while its public API remains pre-1.0.
 
 ## Unreleased
 
+## v0.3.0 - 2026-08-04
+
+- Add provider-native OpenAI and Anthropic base URL helpers.
+- Add per-model OAuth consent parameters and default-model selection.
+- Return rotating refresh tokens and add confidential refresh-token exchange.
+- Update both examples to use the OpenAI-compatible Responses façade and
+  AgentPass settlement headers.
+- Retain the earlier typed capability client as a compatibility API.
+
 ## v0.2.1 - 2026-08-03
 
 - License the public SDK under Apache-2.0.

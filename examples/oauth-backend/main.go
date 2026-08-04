@@ -1,13 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -24,8 +26,9 @@ const (
 )
 
 type session struct {
-	accessToken string
-	expiresAt   time.Time
+	accessToken  string
+	refreshToken string
+	expiresAt    time.Time
 }
 
 type application struct {
@@ -33,6 +36,7 @@ type application struct {
 	clientID     string
 	clientSecret string
 	redirectURI  string
+	providerURL  string
 	secureCookie bool
 	sessions     map[string]session
 	mutex        sync.RWMutex
@@ -110,8 +114,9 @@ func (app *application) connect(response http.ResponseWriter, request *http.Requ
 	})
 	authorizationURL, err := app.client.OAuth.AuthorizationURL(agentpass.AuthorizationURLParams{
 		ClientID: app.clientID, RedirectURI: app.redirectURI,
-		Capabilities: []string{"text.fast", "text.smart"}, MonthlyLimit: 1_000,
-		State: state,
+		Capabilities: []string{"ai.inference"},
+		Models:       []string{"openai:gpt-5.6-sol"},
+		DefaultModel: "openai:gpt-5.6-sol", MonthlyLimit: 1_000, State: state,
 	})
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusInternalServerError)
@@ -150,8 +155,8 @@ func (app *application) callback(response http.ResponseWriter, request *http.Req
 	}
 	app.mutex.Lock()
 	app.sessions[sessionToken] = session{
-		accessToken: token.AccessToken,
-		expiresAt:   time.Now().Add(time.Duration(token.ExpiresIn) * time.Second),
+		accessToken: token.AccessToken, refreshToken: token.RefreshToken,
+		expiresAt: time.Now().Add(time.Duration(token.ExpiresIn) * time.Second),
 	}
 	app.mutex.Unlock()
 	app.setCookie(response, &http.Cookie{
@@ -175,33 +180,97 @@ func (app *application) generate(response http.ResponseWriter, request *http.Req
 		http.Error(response, "input must contain 1 to 10,000 characters", http.StatusBadRequest)
 		return
 	}
-	client, err := agentpass.NewClient(agentpass.WithAccessToken(current.accessToken))
+	idempotencyKey, err := randomToken()
 	if err != nil {
-		http.Error(response, err.Error(), http.StatusInternalServerError)
+		http.Error(response, "could not create request ID", http.StatusInternalServerError)
+		return
+	}
+	payload, err := json.Marshal(map[string]any{
+		"model":             "gpt-5.6-sol",
+		"input":             input,
+		"reasoning":         map[string]string{"effort": "medium"},
+		"max_output_tokens": 600,
+	})
+	if err != nil {
+		http.Error(response, "could not encode request", http.StatusInternalServerError)
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 5*time.Minute)
 	defer cancel()
-	result, err := client.Responses.Create(ctx, agentpass.CreateResponseParams{
-		Capability: "text.fast", Input: input, MaxCredits: 30,
-	})
+	providerRequest, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		app.providerURL+"/responses",
+		bytes.NewReader(payload),
+	)
 	if err != nil {
-		var apiError *agentpass.APIError
-		if errors.As(err, &apiError) {
-			render(response, map[string]any{"Connected": true, "Input": input, "Error": fmt.Sprintf("%s (HTTP %d)", apiError.Code, apiError.StatusCode)})
-			return
-		}
 		render(response, map[string]any{"Connected": true, "Input": input, "Error": err.Error()})
 		return
 	}
+	providerRequest.Header.Set("Authorization", "Bearer "+current.accessToken)
+	providerRequest.Header.Set("Content-Type", "application/json")
+	providerRequest.Header.Set("Idempotency-Key", idempotencyKey)
+	providerRequest.Header.Set("X-AgentPass-Max-Credits", "40")
+	providerResponse, err := http.DefaultClient.Do(providerRequest)
+	if err != nil {
+		render(response, map[string]any{"Connected": true, "Input": input, "Error": err.Error()})
+		return
+	}
+	defer providerResponse.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(providerResponse.Body, 4<<20))
+	if err != nil {
+		render(response, map[string]any{"Connected": true, "Input": input, "Error": err.Error()})
+		return
+	}
+	if providerResponse.StatusCode != http.StatusOK {
+		render(response, map[string]any{
+			"Connected": true, "Input": input,
+			"Error": fmt.Sprintf("AgentPass returned HTTP %d: %s", providerResponse.StatusCode, body),
+		})
+		return
+	}
+	var result struct {
+		Output []struct {
+			Type    string `json:"type"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		render(response, map[string]any{"Connected": true, "Input": input, "Error": err.Error()})
+		return
+	}
+	var output strings.Builder
+	for _, item := range result.Output {
+		for _, content := range item.Content {
+			if item.Type == "message" && content.Type == "output_text" {
+				output.WriteString(content.Text)
+			}
+		}
+	}
 	render(response, map[string]any{
-		"Connected": true, "Input": input, "Output": result.OutputText,
-		"Receipt": fmt.Sprintf("request=%s\ncredits=%d\nremaining=%d", result.AgentPass.Receipt.RequestID, result.AgentPass.Receipt.CreditsUsed, result.AgentPass.Receipt.RemainingCredits),
+		"Connected": true, "Input": input, "Output": output.String(),
+		"Receipt": fmt.Sprintf(
+			"request=%s\ncredits=%s\nremaining=%s",
+			providerResponse.Header.Get("X-AgentPass-Request-Id"),
+			providerResponse.Header.Get("X-AgentPass-Credits-Used"),
+			providerResponse.Header.Get("X-AgentPass-Credits-Remaining"),
+		),
 	})
 }
 
 func main() {
-	client, err := agentpass.NewClient()
+	baseURL := strings.TrimSpace(os.Getenv("AGENTPASS_BASE_URL"))
+	if baseURL == "" {
+		baseURL = agentpass.DefaultBaseURL
+	}
+	client, err := agentpass.NewClient(agentpass.WithBaseURL(baseURL))
+	if err != nil {
+		log.Fatal(err)
+	}
+	providerURL, err := agentpass.OpenAIBaseURL(baseURL)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -209,8 +278,9 @@ func main() {
 	app := &application{
 		client: client, clientID: requiredEnvironment("AGENTPASS_CLIENT_ID"),
 		clientSecret: requiredEnvironment("AGENTPASS_CLIENT_SECRET"),
-		redirectURI:  redirectURI, secureCookie: strings.HasPrefix(redirectURI, "https://"),
-		sessions: make(map[string]session),
+		redirectURI:  redirectURI, providerURL: providerURL,
+		secureCookie: strings.HasPrefix(redirectURI, "https://"),
+		sessions:     make(map[string]session),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", app.home)
