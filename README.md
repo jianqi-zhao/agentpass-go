@@ -5,6 +5,7 @@ The AgentPass Go SDK is a dependency-free backend helper for:
 - building user authorization URLs;
 - confidential authorization-code exchange and refresh-token rotation;
 - provider-native OpenAI and Anthropic base URLs;
+- grant-scoped weekly and monthly usage summaries;
 - the legacy AgentPass response API during migration;
 - stable idempotency keys; and
 - typed, settled metering receipts.
@@ -46,6 +47,11 @@ access and refresh tokens encrypted in application-owned storage.
 AgentPass access tokens expire after one hour. Store refresh tokens encrypted
 and rotate them with `client.OAuth.RefreshAccessToken`; refresh-token reuse
 revokes the entire token family.
+
+Use `client.Usage.Current(ctx)` with the connected user's access token to read
+the app grant's calendar-week and calendar-month limits, settled usage,
+in-flight reservations, and remaining credits. Return only the display fields
+your frontend needs; never send the AgentPass access token to frontend code.
 
 For AI calls, use the official provider SDK and replace only its base URL
 and credential. `agentpass.OpenAIBaseURL(agentpass.DefaultBaseURL)` returns the

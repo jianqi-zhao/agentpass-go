@@ -181,6 +181,8 @@ func TestAuthorizationURLRejectsInvalidInputs(t *testing.T) {
 			params.Models = []string{"openai:gpt-5.6-sol"}
 			params.DefaultModel = "anthropic:claude"
 		}},
+		{"negative weekly limit", func(params *agentpass.AuthorizationURLParams) { params.WeeklyLimit = -1 }},
+		{"weekly above monthly", func(params *agentpass.AuthorizationURLParams) { params.WeeklyLimit = 101 }},
 		{"missing state", func(params *agentpass.AuthorizationURLParams) { params.State = "" }},
 		{"oversized state", func(params *agentpass.AuthorizationURLParams) { params.State = strings.Repeat("a", 1025) }},
 	}

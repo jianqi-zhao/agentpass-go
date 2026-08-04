@@ -5,6 +5,12 @@ versioning while its public API remains pre-1.0.
 
 ## Unreleased
 
+## v0.4.0 - 2026-08-04
+
+- Add `Client.Usage.Current` for grant-scoped calendar-week and calendar-month
+  credit usage.
+- Add an optional weekly limit to OAuth authorization URLs.
+
 ## v0.3.0 - 2026-08-04
 
 - Add provider-native OpenAI and Anthropic base URL helpers.

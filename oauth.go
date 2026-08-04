@@ -26,6 +26,7 @@ type AuthorizationURLParams struct {
 	Models       []string
 	DefaultModel string
 	MonthlyLimit int
+	WeeklyLimit  int
 	State        string
 }
 
@@ -71,6 +72,9 @@ func (service *OAuthService) AuthorizationURL(params AuthorizationURLParams) (st
 	if params.MonthlyLimit <= 0 {
 		return "", errors.New("agentpass: monthly limit must be positive")
 	}
+	if params.WeeklyLimit < 0 || params.WeeklyLimit > params.MonthlyLimit {
+		return "", errors.New("agentpass: weekly limit cannot be negative or exceed the monthly limit")
+	}
 	if params.State == "" {
 		return "", errors.New("agentpass: OAuth state is required")
 	}
@@ -89,6 +93,9 @@ func (service *OAuthService) AuthorizationURL(params AuthorizationURLParams) (st
 		"monthly_limit": {strconv.Itoa(params.MonthlyLimit)},
 	}
 	query.Set("state", params.State)
+	if params.WeeklyLimit > 0 {
+		query.Set("weekly_limit", strconv.Itoa(params.WeeklyLimit))
+	}
 	for _, model := range params.Models {
 		query.Add("model", model)
 	}

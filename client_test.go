@@ -51,6 +51,7 @@ func TestAuthorizationURL(t *testing.T) {
 		Models:       []string{"openai:gpt-5.6-sol"},
 		DefaultModel: "openai:gpt-5.6-sol",
 		MonthlyLimit: 250,
+		WeeklyLimit:  75,
 		State:        "signed-state",
 	})
 	if err != nil {
@@ -68,6 +69,35 @@ func TestAuthorizationURL(t *testing.T) {
 	}
 	if parsed.Query().Get("model") != "openai:gpt-5.6-sol" || parsed.Query().Get("default_model") != "openai:gpt-5.6-sol" {
 		t.Fatalf("unexpected model query: %s", parsed.RawQuery)
+	}
+	if parsed.Query().Get("weekly_limit") != "75" {
+		t.Fatalf("unexpected weekly limit: %s", parsed.RawQuery)
+	}
+}
+
+func TestCurrentUsage(t *testing.T) {
+	client := newTestClient(t, func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/agentpass/v1/usage" || request.Method != http.MethodGet {
+			t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer ap_test" {
+			t.Errorf("unexpected authorization: %s", request.Header.Get("Authorization"))
+		}
+		_, _ = io.WriteString(response, `{
+			"object":"agentpass.usage","grant_id":"grant_123",
+			"app":{"client_id":"client_123","name":"Enjoy Life"},
+			"week":{"starts_at":"2026-08-03T00:00:00Z","ends_at":"2026-08-10T00:00:00Z","limit":100,"used":21,"reserved":4,"remaining":75},
+			"month":{"starts_at":"2026-08-01T00:00:00Z","ends_at":"2026-09-01T00:00:00Z","limit":300,"used":51,"reserved":4,"remaining":245},
+			"updated_at":"2026-08-04T12:00:00Z"
+		}`)
+	}, agentpass.WithAccessToken("ap_test"))
+
+	usage, err := client.Usage.Current(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.App.Name != "Enjoy Life" || usage.Week.Limit != 100 || usage.Week.Used != 21 || usage.Week.Remaining != 75 {
+		t.Fatalf("unexpected usage summary: %+v", usage)
 	}
 }
 
