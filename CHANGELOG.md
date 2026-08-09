@@ -5,6 +5,18 @@ versioning while its public API remains pre-1.0.
 
 ## Unreleased
 
+## v0.7.0 - 2026-08-09
+
+- Add `Client.Identity.UserInfo` so approved native-sign-in integrations can
+  resolve the verified AgentPass account after confidential code exchange.
+- Document the direct mobile registration, verification, recovery, and native
+  Google authorization flow while keeping client secrets and tokens backend-only.
+
+## v0.6.0 - 2026-08-04
+
+- Add `Client.Embed.CreateUsageView` for backend-issued, one-time hosted usage
+  URLs suitable for an iOS `WKWebView`.
+
 ## v0.5.0 - 2026-08-04
 
 - Use the single public credit denomination for OAuth limits, usage summaries,

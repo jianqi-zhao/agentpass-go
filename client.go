@@ -19,7 +19,7 @@ const (
 	// DefaultBaseURL is the public AgentPass API endpoint.
 	DefaultBaseURL = "https://www.prsvrc.com/agentpass"
 	// Version is the SDK version sent in the default User-Agent header.
-	Version          = "0.5.0"
+	Version          = "0.7.0"
 	maxResponseBytes = 4 << 20
 )
 
@@ -146,6 +146,8 @@ type Client struct {
 	OAuth     *OAuthService
 	Responses *ResponsesService
 	Usage     *UsageService
+	Embed     *EmbedService
+	Identity  *IdentityService
 }
 
 // NewClient constructs an AgentPass client. The default endpoint is the live
@@ -185,6 +187,8 @@ func NewClient(options ...Option) (*Client, error) {
 	client.OAuth = &OAuthService{client: client}
 	client.Responses = &ResponsesService{client: client}
 	client.Usage = &UsageService{client: client}
+	client.Embed = &EmbedService{client: client}
+	client.Identity = &IdentityService{client: client}
 	return client, nil
 }
 

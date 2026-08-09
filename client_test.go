@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	agentpass "github.com/jianqi-zhao/agentpass-go"
 )
@@ -98,6 +99,61 @@ func TestCurrentUsage(t *testing.T) {
 	}
 	if usage.App.Name != "Enjoy Life" || usage.Week.Limit != 2.5 || usage.Week.Used != 0.21 || usage.Week.Remaining != 2.25 {
 		t.Fatalf("unexpected usage summary: %+v", usage)
+	}
+}
+
+func TestUserInfo(t *testing.T) {
+	client := newTestClient(t, func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/agentpass/oauth/userinfo" || request.Method != http.MethodGet {
+			t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer ap_identity" {
+			t.Errorf("unexpected authorization: %s", request.Header.Get("Authorization"))
+		}
+		_, _ = io.WriteString(response, `{"sub":"user_123","name":"Ada","email":"ada@example.com","email_verified":true}`)
+	}, agentpass.WithAccessToken("ap_identity"))
+
+	profile, err := client.Identity.UserInfo(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.Subject != "user_123" || profile.Email != "ada@example.com" || !profile.EmailVerified {
+		t.Fatalf("unexpected identity: %+v", profile)
+	}
+}
+
+func TestCreateUsageEmbedForWKWebView(t *testing.T) {
+	client := newTestClient(t, func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/agentpass/v1/embed/sessions" || request.Method != http.MethodPost {
+			t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer ap_test" {
+			t.Errorf("unexpected authorization: %s", request.Header.Get("Authorization"))
+		}
+		payload := map[string]string{}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["theme"] != "dark" {
+			t.Fatalf("unexpected embed payload: %v", payload)
+		}
+		_, _ = io.WriteString(response, `{
+			"object":"agentpass.embed_session",
+			"component":"usage",
+			"embed_url":"https://agentpass.example/agentpass/embed/usage?theme=dark#code=embed_code_one_time_value",
+			"expires_at":"`+time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)+`"
+		}`)
+	}, agentpass.WithAccessToken("ap_test"))
+
+	session, err := client.Embed.CreateUsageView(
+		context.Background(),
+		agentpass.EmbedThemeDark,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Component != "usage" || !strings.Contains(session.EmbedURL, "#code=embed_code_") {
+		t.Fatalf("unexpected embed session: %+v", session)
 	}
 }
 

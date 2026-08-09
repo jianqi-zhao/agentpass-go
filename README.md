@@ -4,8 +4,10 @@ The AgentPass Go SDK is a dependency-free backend helper for:
 
 - building user authorization URLs;
 - confidential authorization-code exchange and refresh-token rotation;
+- verified AgentPass identity lookup for `identity.basic` grants;
 - provider-native OpenAI and Anthropic base URLs;
 - grant-scoped weekly and monthly usage summaries;
+- backend-issued, one-time hosted usage URLs for iOS `WKWebView`;
 - the legacy AgentPass response API during migration;
 - stable idempotency keys; and
 - typed, settled metering receipts.
@@ -51,10 +53,25 @@ AgentPass access tokens expire after one hour. Store refresh tokens encrypted
 and rotate them with `client.OAuth.RefreshAccessToken`; refresh-token reuse
 revokes the entire token family.
 
+For an operator-approved native account flow, the mobile app submits account
+credentials directly to AgentPass and gives your backend only the returned
+one-time code and state. After confidential code exchange, configure a client
+with the access token and call `client.Identity.UserInfo(ctx)`. Key your local
+account by `UserInfo.Subject`, then issue your own opaque application session.
+Never proxy the user's AgentPass password through the backend or return the
+AgentPass token pair to mobile code.
+
 Use `client.Usage.Current(ctx)` with the connected user's access token to read
 the app grant's calendar-week and calendar-month limits, settled usage,
 in-flight reservations, and remaining credits. Return only the display fields
 your frontend needs; never send the AgentPass access token to frontend code.
+
+To use AgentPass's ready-made mobile UI, call
+`client.Embed.CreateUsageView(ctx, agentpass.EmbedThemeSystem)` from the
+backend and return only its `EmbedURL` to the currently signed-in iOS user.
+Load that URL directly in a `WKWebView`. The URL code expires after two minutes,
+works once, and opens a read-only fifteen-minute session bound to the same app
+grant. Do not persist, log, prefetch, or send analytics containing the URL.
 
 For AI calls, use the official provider SDK and replace only its base URL
 and credential. `agentpass.OpenAIBaseURL(agentpass.DefaultBaseURL)` returns the
