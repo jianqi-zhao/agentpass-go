@@ -9,15 +9,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
-	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
 	agentpass "github.com/jianqi-zhao/agentpass-go"
+	"github.com/jianqi-zhao/agentpass-go/examples/internal/openairesponse"
 )
 
 const (
@@ -196,7 +197,7 @@ func (app *application) generate(response http.ResponseWriter, request *http.Req
 		http.Error(response, "could not encode request", http.StatusInternalServerError)
 		return
 	}
-	ctx, cancel := context.WithTimeout(request.Context(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(request.Context(), agentpass.DefaultHTTPTimeout)
 	defer cancel()
 	providerRequest, err := http.NewRequestWithContext(
 		ctx,
@@ -212,13 +213,13 @@ func (app *application) generate(response http.ResponseWriter, request *http.Req
 	providerRequest.Header.Set("Content-Type", "application/json")
 	providerRequest.Header.Set("Idempotency-Key", idempotencyKey)
 	providerRequest.Header.Set("X-AgentPass-Max-Credits", "0.4")
-	providerResponse, err := http.DefaultClient.Do(providerRequest)
+	providerResponse, err := agentpass.ProviderHTTPClient(http.DefaultClient).Do(providerRequest)
 	if err != nil {
 		render(response, map[string]any{"Connected": true, "Input": input, "Error": err.Error()})
 		return
 	}
 	defer providerResponse.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(providerResponse.Body, 4<<20))
+	body, err := openairesponse.ReadBody(providerResponse.Body)
 	if err != nil {
 		render(response, map[string]any{"Connected": true, "Input": input, "Error": err.Error()})
 		return
@@ -226,21 +227,56 @@ func (app *application) generate(response http.ResponseWriter, request *http.Req
 	if providerResponse.StatusCode != http.StatusOK {
 		render(response, map[string]any{
 			"Connected": true, "Input": input,
-			"Error": fmt.Sprintf("AgentPass returned HTTP %d: %s", providerResponse.StatusCode, body),
+			"Error": openairesponse.DescribeHTTPError(providerResponse.StatusCode, body),
 		})
 		return
 	}
-	var result struct {
-		Output []struct {
-			Type    string `json:"type"`
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"output"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
+	result, err := openairesponse.Parse(body)
+	if err != nil {
 		render(response, map[string]any{"Connected": true, "Input": input, "Error": err.Error()})
+		return
+	}
+	disposition, err := openairesponse.ClassifyStatus(result.Status)
+	if err != nil {
+		render(response, map[string]any{
+			"Connected": true, "Input": input, "Error": err.Error(),
+		})
+		return
+	}
+	switch disposition {
+	case openairesponse.DispositionPollable:
+		render(response, map[string]any{
+			"Connected": true, "Input": input,
+			"Error": fmt.Sprintf(
+				"OpenAI response is %s; poll GET /openai/v1/responses/%s and do not submit another POST",
+				result.Status,
+				url.PathEscape(result.ID),
+			),
+		})
+		return
+	case openairesponse.DispositionFailed:
+		render(response, map[string]any{
+			"Connected": true, "Input": input,
+			"Error": fmt.Sprintf(
+				"OpenAI response failed: %s. AgentPass did not charge this attempt; choose Generate again to start a new logical attempt with a new Idempotency-Key",
+				openairesponse.DescribeError(result.Error),
+			),
+		})
+		return
+	case openairesponse.DispositionBillable:
+		// Both completed and incomplete are terminal and can contain verified usage.
+	}
+	// The shared parser requires X-AgentPass-Request-Id,
+	// X-AgentPass-Credits-Reserved, X-AgentPass-Credits-Used, and
+	// X-AgentPass-Credits-Remaining on every settled response.
+	receipt, err := openairesponse.ParseSettlementReceipt(
+		providerResponse.Header,
+		result.ID,
+	)
+	if err != nil {
+		render(response, map[string]any{
+			"Connected": true, "Input": input, "Error": err.Error(),
+		})
 		return
 	}
 	var output strings.Builder
@@ -254,10 +290,12 @@ func (app *application) generate(response http.ResponseWriter, request *http.Req
 	render(response, map[string]any{
 		"Connected": true, "Input": input, "Output": output.String(),
 		"Receipt": fmt.Sprintf(
-			"request=%s\ncredits=%s\nremaining=%s",
-			providerResponse.Header.Get("X-AgentPass-Request-Id"),
-			providerResponse.Header.Get("X-AgentPass-Credits-Used"),
-			providerResponse.Header.Get("X-AgentPass-Credits-Remaining"),
+			"status=%s\nrequest=%s\nreserved=%s\ncredits=%s\nremaining=%s",
+			result.Status,
+			receipt.RequestID,
+			receipt.CreditsReserved,
+			receipt.CreditsUsed,
+			receipt.CreditsRemaining,
 		),
 	})
 }

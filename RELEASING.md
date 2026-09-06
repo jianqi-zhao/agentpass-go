@@ -12,7 +12,7 @@ immutable semantic-version tag in the dedicated public repository.
 5. The workflow re-runs verification, creates the tag and GitHub release, and
 confirms that the version resolves through `proxy.golang.org`.
 
-The local publisher defaults to Go 1.26.5 and can be moved to a newer patched
+The local publisher defaults to Go 1.27.1 and can be moved to a newer patched
 toolchain with `AGENTPASS_GO_TOOLCHAIN`. The release workflow also requires a
 public `LICENSE` file and is safe to re-run after a transient proxy or GitHub
 release failure, provided the immutable tag still points at the same commit.

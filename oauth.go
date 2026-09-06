@@ -81,8 +81,8 @@ func (service *OAuthService) AuthorizationURL(params AuthorizationURLParams) (st
 	if strings.TrimSpace(params.State) != params.State || !validHeaderValue(params.State) {
 		return "", errors.New("agentpass: OAuth state contains invalid characters")
 	}
-	if len(params.State) > 1024 {
-		return "", errors.New("agentpass: OAuth state cannot exceed 1024 characters")
+	if len(params.State) > 512 {
+		return "", errors.New("agentpass: OAuth state cannot exceed 512 characters")
 	}
 
 	query := url.Values{
@@ -113,7 +113,7 @@ func validateRedirectURI(raw string) error {
 	if parsed.User != nil || parsed.Fragment != "" {
 		return errors.New("agentpass: OAuth redirect URI cannot contain credentials or a fragment")
 	}
-	loopbackRedirect := parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1"
+	loopbackRedirect := isLoopbackHost(parsed.Hostname())
 	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && loopbackRedirect) {
 		return errors.New("agentpass: OAuth redirect URI must use HTTPS except on localhost")
 	}
@@ -143,6 +143,9 @@ type RefreshTokenParams struct {
 	RefreshToken string
 	ClientID     string
 	ClientSecret string
+	// IdempotencyKey must be durably persisted before the request is sent and
+	// reused unchanged after an ambiguous transport failure.
+	IdempotencyKey string
 }
 
 // ExchangeAuthorizationCode exchanges a one-time code from the callback for an
@@ -197,11 +200,16 @@ func (service *OAuthService) RefreshAccessToken(
 ) (*Token, error) {
 	if strings.TrimSpace(params.RefreshToken) == "" ||
 		strings.TrimSpace(params.RefreshToken) != params.RefreshToken ||
+		len(params.RefreshToken) > maxTokenBytes ||
 		strings.TrimSpace(params.ClientID) == "" ||
 		strings.TrimSpace(params.ClientID) != params.ClientID ||
 		strings.TrimSpace(params.ClientSecret) == "" ||
-		strings.TrimSpace(params.ClientSecret) != params.ClientSecret {
-		return nil, errors.New("agentpass: refresh token, client ID, and client secret are required")
+		strings.TrimSpace(params.ClientSecret) != params.ClientSecret ||
+		strings.TrimSpace(params.IdempotencyKey) == "" ||
+		strings.TrimSpace(params.IdempotencyKey) != params.IdempotencyKey ||
+		len(params.IdempotencyKey) > 200 ||
+		!validHeaderValue(params.IdempotencyKey) {
+		return nil, errors.New("agentpass: refresh token, client ID, client secret, and a valid durable idempotency key are required")
 	}
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
@@ -219,6 +227,7 @@ func (service *OAuthService) RefreshAccessToken(
 		return nil, err
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Idempotency-Key", params.IdempotencyKey)
 	token := &Token{}
 	if err := service.client.do(request, token); err != nil {
 		return nil, err
@@ -232,9 +241,11 @@ func (service *OAuthService) RefreshAccessToken(
 func validateToken(token *Token) error {
 	if strings.TrimSpace(token.AccessToken) == "" ||
 		strings.TrimSpace(token.AccessToken) != token.AccessToken ||
+		len(token.AccessToken) > maxTokenBytes ||
 		!validHeaderValue(token.AccessToken) ||
 		strings.TrimSpace(token.RefreshToken) == "" ||
 		strings.TrimSpace(token.RefreshToken) != token.RefreshToken ||
+		len(token.RefreshToken) > maxTokenBytes ||
 		!validHeaderValue(token.RefreshToken) ||
 		!strings.EqualFold(token.TokenType, "Bearer") ||
 		token.ExpiresIn <= 0 ||

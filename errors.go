@@ -4,6 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"unicode"
+)
+
+const (
+	maxAPIErrorCodeBytes    = 128
+	maxAPIErrorMessageRunes = 512
 )
 
 // ErrInvalidResponse identifies a successful HTTP response that does not
@@ -20,10 +27,48 @@ type APIError struct {
 
 // Error implements error.
 func (err *APIError) Error() string {
-	if err.Code == "" {
+	if err == nil {
+		return "agentpass: API request failed"
+	}
+	code := safeAPIErrorCode(err.Code)
+	if code == "" {
 		return fmt.Sprintf("agentpass: API request failed with HTTP %d", err.StatusCode)
 	}
-	return fmt.Sprintf("agentpass: %s (HTTP %d): %s", err.Code, err.StatusCode, err.Message)
+	message := safeAPIErrorMessage(err.Message)
+	if message == "" {
+		return fmt.Sprintf("agentpass: %s (HTTP %d)", code, err.StatusCode)
+	}
+	return fmt.Sprintf("agentpass: %s (HTTP %d): %s", code, err.StatusCode, message)
+}
+
+func safeAPIErrorCode(value string) string {
+	if value == "" || len(value) > maxAPIErrorCodeBytes {
+		return ""
+	}
+	for _, character := range value {
+		if !((character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			character == '_' || character == '-' || character == '.') {
+			return ""
+		}
+	}
+	return value
+}
+
+func safeAPIErrorMessage(value string) string {
+	value = strings.Map(func(character rune) rune {
+		if unicode.IsControl(character) || unicode.Is(unicode.Cf, character) {
+			return ' '
+		}
+		return character
+	}, value)
+	value = strings.Join(strings.Fields(value), " ")
+	characters := []rune(value)
+	if len(characters) > maxAPIErrorMessageRunes {
+		value = string(characters[:maxAPIErrorMessageRunes])
+	}
+	return value
 }
 
 func decodeAPIError(statusCode int, body []byte) error {
@@ -39,8 +84,8 @@ func decodeAPIError(statusCode int, body []byte) error {
 	}
 	return &APIError{
 		StatusCode: statusCode,
-		Code:       envelope.Error.Code,
-		Message:    envelope.Error.Message,
+		Code:       safeAPIErrorCode(envelope.Error.Code),
+		Message:    safeAPIErrorMessage(envelope.Error.Message),
 		Details:    envelope.Error.Details,
 	}
 }

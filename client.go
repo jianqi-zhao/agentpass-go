@@ -1,4 +1,5 @@
-// Package agentpass provides a backend client for the AgentPass OAuth and AI APIs.
+// Package agentpass provides backend OAuth, identity, usage, and embed clients
+// plus transport helpers for provider-native AI APIs.
 package agentpass
 
 import (
@@ -19,8 +20,12 @@ const (
 	// DefaultBaseURL is the public AgentPass API endpoint.
 	DefaultBaseURL = "https://www.prsvrc.com/agentpass"
 	// Version is the SDK version sent in the default User-Agent header.
-	Version          = "0.7.0"
-	maxResponseBytes = 4 << 20
+	Version = "0.8.0"
+	// DefaultHTTPTimeout exceeds AgentPass's default 15-minute synchronous
+	// provider wait, leaving a small allowance for network and settlement work.
+	DefaultHTTPTimeout = 16 * time.Minute
+	maxResponseBytes   = 4 << 20
+	maxTokenBytes      = 4 << 10
 )
 
 // TokenSource returns an AgentPass access token for an outgoing request.
@@ -96,6 +101,9 @@ func WithAccessToken(accessToken string) Option {
 		if accessToken == "" {
 			return errors.New("agentpass: access token cannot be empty")
 		}
+		if len(accessToken) > maxTokenBytes {
+			return errors.New("agentpass: access token is unexpectedly large")
+		}
 		if strings.TrimSpace(accessToken) != accessToken {
 			return errors.New("agentpass: access token cannot contain surrounding whitespace")
 		}
@@ -143,20 +151,19 @@ type Client struct {
 	tokenSource TokenSource
 	userAgent   string
 
-	OAuth     *OAuthService
-	Responses *ResponsesService
-	Usage     *UsageService
-	Embed     *EmbedService
-	Identity  *IdentityService
+	OAuth    *OAuthService
+	Usage    *UsageService
+	Embed    *EmbedService
+	Identity *IdentityService
 }
 
 // NewClient constructs an AgentPass client. The default endpoint is the live
-// AgentPass deployment and the default request timeout is five minutes.
+// AgentPass deployment and the default request timeout is DefaultHTTPTimeout.
 func NewClient(options ...Option) (*Client, error) {
 	configuration := clientOptions{
 		baseURL: DefaultBaseURL,
 		httpClient: &http.Client{
-			Timeout:       5 * time.Minute,
+			Timeout:       DefaultHTTPTimeout,
 			CheckRedirect: rejectRedirect,
 		},
 		userAgent: "agentpass-go/" + Version,
@@ -175,9 +182,10 @@ func NewClient(options ...Option) (*Client, error) {
 		return nil, err
 	}
 	httpClient := *configuration.httpClient
-	if httpClient.CheckRedirect == nil {
-		httpClient.CheckRedirect = rejectRedirect
-	}
+	// Redirect refusal is a credential-safety invariant, not a caller-tunable
+	// transport preference. A permissive supplied client could otherwise
+	// forward AgentPass bearer credentials to an unexpected redirect target.
+	httpClient.CheckRedirect = rejectRedirect
 	client := &Client{
 		baseURL:     baseURL,
 		httpClient:  &httpClient,
@@ -185,7 +193,6 @@ func NewClient(options ...Option) (*Client, error) {
 		userAgent:   configuration.userAgent,
 	}
 	client.OAuth = &OAuthService{client: client}
-	client.Responses = &ResponsesService{client: client}
 	client.Usage = &UsageService{client: client}
 	client.Embed = &EmbedService{client: client}
 	client.Identity = &IdentityService{client: client}
@@ -194,6 +201,19 @@ func NewClient(options ...Option) (*Client, error) {
 
 func rejectRedirect(*http.Request, []*http.Request) error {
 	return http.ErrUseLastResponse
+}
+
+// ProviderHTTPClient clones an HTTP client and refuses redirects. Use the
+// clone with an official provider SDK so an AgentPass bearer token cannot be
+// forwarded to a location selected by a redirect response. A nil input clones
+// http.DefaultClient. The caller remains responsible for setting a timeout.
+func ProviderHTTPClient(httpClient *http.Client) *http.Client {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	clone := *httpClient
+	clone.CheckRedirect = rejectRedirect
+	return &clone
 }
 
 func normalizeBaseURL(rawURL string) (string, error) {
@@ -279,6 +299,9 @@ func (client *Client) authorizeRequest(ctx context.Context, request *http.Reques
 	}
 	if accessToken == "" {
 		return errors.New("agentpass: token source returned an empty access token")
+	}
+	if len(accessToken) > maxTokenBytes {
+		return errors.New("agentpass: token source returned an unexpectedly large access token")
 	}
 	if strings.TrimSpace(accessToken) != accessToken {
 		return errors.New("agentpass: token source returned an access token with surrounding whitespace")

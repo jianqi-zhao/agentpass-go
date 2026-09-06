@@ -5,12 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
+	"net/url"
 	"os"
-	"time"
 
 	agentpass "github.com/jianqi-zhao/agentpass-go"
+	"github.com/jianqi-zhao/agentpass-go/examples/internal/openairesponse"
 )
 
 func main() {
@@ -41,7 +41,7 @@ func main() {
 		input = "Explain portable AI access in one sentence."
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), agentpass.DefaultHTTPTimeout)
 	defer cancel()
 	payload, err := json.Marshal(map[string]any{
 		"model":             "gpt-5.6-sol",
@@ -65,17 +65,47 @@ func main() {
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Idempotency-Key", idempotencyKey)
 	request.Header.Set("X-AgentPass-Max-Credits", "0.4")
-	response, err := http.DefaultClient.Do(request)
+	response, err := agentpass.ProviderHTTPClient(http.DefaultClient).Do(request)
 	if err != nil {
 		fail(err)
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	body, err := openairesponse.ReadBody(response.Body)
 	if err != nil {
 		fail(err)
 	}
 	if response.StatusCode != http.StatusOK {
-		fail(fmt.Errorf("AgentPass returned HTTP %d: %s", response.StatusCode, body))
+		fail(fmt.Errorf("%s", openairesponse.DescribeHTTPError(response.StatusCode, body)))
+	}
+	metadata, err := openairesponse.Parse(body)
+	if err != nil {
+		fail(err)
+	}
+	disposition, err := openairesponse.ClassifyStatus(metadata.Status)
+	if err != nil {
+		fail(err)
+	}
+	switch disposition {
+	case openairesponse.DispositionPollable:
+		fail(fmt.Errorf(
+			"OpenAI response is %s; poll GET /openai/v1/responses/%s and do not submit another POST",
+			metadata.Status,
+			url.PathEscape(metadata.ID),
+		))
+	case openairesponse.DispositionFailed:
+		fail(fmt.Errorf(
+			"OpenAI response failed: %s. AgentPass did not charge this attempt; start a new logical attempt with a new Idempotency-Key",
+			openairesponse.DescribeError(metadata.Error),
+		))
+	case openairesponse.DispositionBillable:
+		// Both completed and incomplete are terminal and can contain verified usage.
+	}
+	// The shared parser requires X-AgentPass-Request-Id,
+	// X-AgentPass-Credits-Reserved, X-AgentPass-Credits-Used, and
+	// X-AgentPass-Credits-Remaining on every settled response.
+	receipt, err := openairesponse.ParseSettlementReceipt(response.Header, metadata.ID)
+	if err != nil {
+		fail(err)
 	}
 	var result any
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -83,9 +113,10 @@ func main() {
 	}
 	output := map[string]any{
 		"response":          result,
-		"request_id":        response.Header.Get("X-AgentPass-Request-Id"),
-		"credits_used":      response.Header.Get("X-AgentPass-Credits-Used"),
-		"credits_remaining": response.Header.Get("X-AgentPass-Credits-Remaining"),
+		"request_id":        receipt.RequestID,
+		"credits_reserved":  receipt.CreditsReserved,
+		"credits_used":      receipt.CreditsUsed,
+		"credits_remaining": receipt.CreditsRemaining,
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(output); err != nil {
 		fail(err)

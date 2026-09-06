@@ -3,7 +3,42 @@
 All notable SDK changes are recorded here. The project follows semantic
 versioning while its public API remains pre-1.0.
 
-## Unreleased
+## v0.8.0 - 2026-09-05
+
+- Publish and scan with patched Go 1.27.1; test both Go 1.26.8 and Go 1.27.1.
+- Breaking: remove the retired `Client.Responses.Create` inference API, its
+  request/result/receipt types, and `ResponseRequestError`. Use a provider-native
+  client with explicit models; see the README migration guide.
+- Preserve OAuth, identity, usage, embed, provider URL and HTTP-client helpers,
+  and `NewIdempotencyKey`. The server's old endpoint now returns HTTP 410.
+
+- Keep typed API error strings single-line and bounded even when an upstream
+  error envelope is malformed.
+- Keep redirect refusal as an SDK credential-safety invariant even when callers
+  supply a permissive `http.Client`; expose the same cloned, redirect-refusing
+  client configuration for official provider SDKs and examples so AgentPass
+  tokens and request bodies cannot be forwarded to redirect-selected hosts.
+  Also accept IPv6 loopback OAuth callbacks and reject unexpectedly large OAuth
+  bearer values.
+- Require provider-native examples to validate the OpenAI response object and
+  the syntax and ordering of all settlement credit headers before accepting a
+  billable result.
+- Make both runnable examples share one bounded OpenAI response and settlement-
+  receipt parser, reject bodies that exceed the 4 MiB limit by one byte, and use
+  structured validation in tests.
+- Match the server's fail-closed OAuth contract by rejecting state values over
+  512 characters.
+- Document that native email verification requires confirmation-time password
+  proof sent directly from the mobile app to AgentPass; the Go backend never
+  receives that password.
+- Increase the default client and example request deadline from five to
+  sixteen minutes so it exceeds AgentPass's default synchronous provider wait.
+- Make both provider-native OpenAI examples poll only `queued` and
+  `in_progress`, require settlement headers for terminal `completed` and
+  `incomplete` responses, and report terminal `failed` responses as no-charge
+  work that needs a new logical attempt and idempotency key. Provider error
+  details are decoded, bounded, and stripped of control characters before
+  display.
 
 ## v0.7.0 - 2026-08-09
 

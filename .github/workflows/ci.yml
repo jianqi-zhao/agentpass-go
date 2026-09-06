@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go-version: ["1.25.12", "1.26.5"]
+        go-version: ["1.26.8", "1.27.1"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -33,10 +33,10 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Vulnerability scan
-        if: matrix.go-version == '1.26.5'
+        if: matrix.go-version == '1.27.1'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
       - name: Fuzz protocol boundaries
-        if: matrix.go-version == '1.26.5'
+        if: matrix.go-version == '1.27.1'
         run: |
           go test -run=^$ -fuzz=FuzzNormalizeBaseURL -fuzztime=10s .
           go test -run=^$ -fuzz=FuzzValidateRedirectURI -fuzztime=10s .

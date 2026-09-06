@@ -48,7 +48,7 @@ func TestAuthorizationURL(t *testing.T) {
 	authorizationURL, err := client.OAuth.AuthorizationURL(agentpass.AuthorizationURLParams{
 		ClientID:     "client_123",
 		RedirectURI:  "https://app.example/callback",
-		Capabilities: []string{"text.fast", "text.smart"},
+		Capabilities: []string{"ai.inference", "identity.basic"},
 		Models:       []string{"openai:gpt-5.6-sol"},
 		DefaultModel: "openai:gpt-5.6-sol",
 		MonthlyLimit: 10,
@@ -65,7 +65,7 @@ func TestAuthorizationURL(t *testing.T) {
 	if parsed.Path != "/agentpass/oauth/authorize" {
 		t.Fatalf("unexpected authorization path: %s", parsed.Path)
 	}
-	if parsed.Query().Get("scope") != "text.fast text.smart" || parsed.Query().Get("state") != "signed-state" {
+	if parsed.Query().Get("scope") != "ai.inference identity.basic" || parsed.Query().Get("state") != "signed-state" {
 		t.Fatalf("unexpected authorization query: %s", parsed.RawQuery)
 	}
 	if parsed.Query().Get("model") != "openai:gpt-5.6-sol" || parsed.Query().Get("default_model") != "openai:gpt-5.6-sol" {
@@ -197,12 +197,16 @@ func TestRefreshAccessToken(t *testing.T) {
 		if request.Form.Get("grant_type") != "refresh_token" || request.Form.Get("refresh_token") != "refresh_old" {
 			t.Fatalf("unexpected refresh form: %v", request.Form)
 		}
+		if request.Header.Get("Idempotency-Key") != "refresh-attempt-123" {
+			t.Fatalf("unexpected refresh idempotency key: %q", request.Header.Get("Idempotency-Key"))
+		}
 		_, _ = io.WriteString(response, `{"access_token":"ap_new","refresh_token":"refresh_new","token_type":"Bearer","expires_in":3600,"grant_id":"grant_123"}`)
 	})
 	token, err := client.OAuth.RefreshAccessToken(context.Background(), agentpass.RefreshTokenParams{
-		RefreshToken: "refresh_old",
-		ClientID:     "client_123",
-		ClientSecret: "server-secret",
+		RefreshToken:   "refresh_old",
+		ClientID:       "client_123",
+		ClientSecret:   "server-secret",
+		IdempotencyKey: "refresh-attempt-123",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -226,62 +230,17 @@ func TestProviderBaseURLs(t *testing.T) {
 	}
 }
 
-func TestCreateResponseSendsAuthenticationAndIdempotency(t *testing.T) {
-	client := newTestClient(t, func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/agentpass/v1/responses" {
-			t.Errorf("unexpected path: %s", request.URL.Path)
-		}
-		if request.Header.Get("Authorization") != "Bearer ap_test" {
-			t.Errorf("unexpected authorization: %s", request.Header.Get("Authorization"))
-		}
-		if request.Header.Get("Idempotency-Key") != "job-42" {
-			t.Errorf("unexpected idempotency key: %s", request.Header.Get("Idempotency-Key"))
-		}
-		payload := map[string]any{}
-		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+func TestNewIdempotencyKey(t *testing.T) {
+	keys := make(map[string]bool)
+	for range 100 {
+		key, err := agentpass.NewIdempotencyKey()
+		if err != nil {
 			t.Fatal(err)
 		}
-		if payload["capability"] != "text.fast" || payload["max_credits"] != float64(0.3) {
-			t.Errorf("unexpected payload: %v", payload)
+		if len(key) != 36 || key[14] != '4' || !strings.ContainsRune("89ab", rune(key[19])) || keys[key] {
+			t.Fatalf("invalid or repeated idempotency key: %q", key)
 		}
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(response, `{
-			"id":"request_123","object":"agentpass.response","model":"fast-model",
-			"output_text":"done","usage":{"inputTokens":12,"cachedInputTokens":3,"outputTokens":4,"reasoningTokens":2,"totalTokens":16},
-			"agentpass":{"receipt":{"request_id":"request_123","app":"Draftly","capability":"text.fast","credits_reserved":0.3,"credits_used":0.03,"remaining_credits":9.97,"settled_at":"2026-08-03T00:00:00.000Z"}}
-		}`)
-	}, agentpass.WithAccessToken("ap_test"))
-
-	result, err := client.Responses.Create(context.Background(), agentpass.CreateResponseParams{
-		Capability:     "text.fast",
-		Input:          "Write a title",
-		MaxCredits:     0.3,
-		IdempotencyKey: "job-42",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.OutputText != "done" || result.AgentPass.Receipt.CreditsUsed != 0.03 || result.Usage.TotalTokens != 16 {
-		t.Fatalf("unexpected response: %+v", result)
-	}
-}
-
-func TestCreateResponseGeneratesIdempotencyKey(t *testing.T) {
-	client := newTestClient(t, func(response http.ResponseWriter, request *http.Request) {
-		if len(request.Header.Get("Idempotency-Key")) != 36 {
-			t.Errorf("expected generated UUID, got %q", request.Header.Get("Idempotency-Key"))
-		}
-		_, _ = io.WriteString(response, `{
-			"id":"request_generated","object":"agentpass.response","model":"fast-model",
-			"output_text":"done","usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2},
-			"agentpass":{"receipt":{"request_id":"request_generated","app":"Draftly","capability":"text.fast","credits_reserved":0.1,"credits_used":0.01,"remaining_credits":9.99,"settled_at":"2026-08-03T00:00:00Z"}}
-		}`)
-	}, agentpass.WithAccessToken("ap_test"))
-	if _, err := client.Responses.Create(context.Background(), agentpass.CreateResponseParams{
-		Capability: "text.fast",
-		Input:      "Hello",
-	}); err != nil {
-		t.Fatal(err)
+		keys[key] = true
 	}
 }
 
@@ -291,10 +250,7 @@ func TestAPIErrorIsTyped(t *testing.T) {
 		_, _ = io.WriteString(response, `{"error":{"code":"grant_revoked","message":"The grant was revoked.","details":{"grant_id":"grant_123"}}}`)
 	}, agentpass.WithAccessToken("ap_revoked"))
 
-	_, err := client.Responses.Create(context.Background(), agentpass.CreateResponseParams{
-		Capability: "text.fast",
-		Input:      "Hello",
-	})
+	_, err := client.Usage.Current(context.Background())
 	var apiError *agentpass.APIError
 	if !errors.As(err, &apiError) {
 		t.Fatalf("expected APIError, got %T: %v", err, err)
