@@ -37,6 +37,11 @@ jobs:
           go vet ./...
           test -f LICENSE
           go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+      - name: Extract curated release notes
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          sh scripts/release-notes.sh "$VERSION" > "$RUNNER_TEMP/agentpass-sdk-release-notes.md"
       - name: Create immutable tag and GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -49,7 +54,7 @@ jobs:
             git push origin "$VERSION"
           fi
           if ! gh release view "$VERSION" >/dev/null 2>&1; then
-            gh release create "$VERSION" --verify-tag --generate-notes --title "AgentPass Go SDK $VERSION"
+            gh release create "$VERSION" --verify-tag --notes-file "$RUNNER_TEMP/agentpass-sdk-release-notes.md" --title "AgentPass Go SDK $VERSION"
           fi
       - name: Verify the public module
         env:

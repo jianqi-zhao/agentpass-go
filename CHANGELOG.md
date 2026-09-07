@@ -3,8 +3,23 @@
 All notable SDK changes are recorded here. The project follows semantic
 versioning while its public API remains pre-1.0.
 
+## v0.8.1 - 2026-09-06
+
+- Document the existing mandatory refresh idempotency contract, introduced in
+  v0.8.0. This documentation patch does not add a new server requirement.
+- Add the v0.7.0 upgrade steps, raw refresh request, error-code handling, durable
+  retry/concurrency requirements, and validation regressions. An SDK upgrade
+  alone is insufficient: callers must populate `RefreshTokenParams.IdempotencyKey`.
+- Publish curated changelog entries in GitHub release notes so breaking changes
+  are visible without following a source comparison link.
+
 ## v0.8.0 - 2026-09-05
 
+- Breaking (clarification added in v0.8.1): refresh-token exchange requires
+  `RefreshTokenParams.IdempotencyKey`, sent as the HTTP `Idempotency-Key` header.
+  v0.7.0 and older cannot send it. Persist a key with the old encrypted token
+  before dispatch and reuse both after ambiguous failures; upgrading alone
+  does not supply this key. See the README's refresh migration and error table.
 - Publish and scan with patched Go 1.27.1; test both Go 1.26.8 and Go 1.27.1.
 - Breaking: remove the retired `Client.Responses.Create` inference API, its
   request/result/receipt types, and `ResponseRequestError`. Use a provider-native

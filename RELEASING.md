@@ -12,6 +12,13 @@ immutable semantic-version tag in the dedicated public repository.
 5. The workflow re-runs verification, creates the tag and GitHub release, and
 confirms that the version resolves through `proxy.golang.org`.
 
+GitHub release notes come from the matching reviewed `CHANGELOG.md` entry via
+`scripts/release-notes.sh`; an absent or empty entry blocks publication. Every
+breaking server/SDK contract change must name the minimum compatible SDK, the
+required caller changes, retry behavior, and error handling. A source comparison
+link alone is not a migration notice. Publish migration guidance before enabling
+the changed contract and verify the upgraded refresh path end to end.
+
 The local publisher defaults to Go 1.27.1 and can be moved to a newer patched
 toolchain with `AGENTPASS_GO_TOOLCHAIN`. The release workflow also requires a
 public `LICENSE` file and is safe to re-run after a transient proxy or GitHub

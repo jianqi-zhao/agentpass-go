@@ -143,8 +143,10 @@ type RefreshTokenParams struct {
 	RefreshToken string
 	ClientID     string
 	ClientSecret string
-	// IdempotencyKey must be durably persisted before the request is sent and
-	// reused unchanged after an ambiguous transport failure.
+	// IdempotencyKey is required for refresh, unlike authorization-code exchange.
+	// Persist it with the old encrypted token before sending and reuse the exact
+	// attempt after ambiguous failures (five-minute server recovery window).
+	// Coordinate one in-flight refresh per grant across all backend replicas.
 	IdempotencyKey string
 }
 
@@ -194,6 +196,10 @@ func (service *OAuthService) ExchangeAuthorizationCode(
 
 // RefreshAccessToken rotates a refresh token and returns a new access/refresh
 // token pair. Persist the replacement before discarding the previous value.
+// SDK v0.8.0 introduced the required IdempotencyKey parameter. Upgrading an older
+// caller without supplying a durable key is insufficient; validation fails before
+// HTTP. API invalid_idempotency_key does not consume the refresh token, whereas
+// refresh_token_reuse revokes the connection and requires user reconnection.
 func (service *OAuthService) RefreshAccessToken(
 	ctx context.Context,
 	params RefreshTokenParams,

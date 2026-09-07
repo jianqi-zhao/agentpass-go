@@ -19,7 +19,7 @@ are never scaled or converted to another unit.
 ## Install
 
 ```bash
-go get github.com/jianqi-zhao/agentpass-go@latest
+go get github.com/jianqi-zhao/agentpass-go@v0.8.1
 ```
 
 ## Call the provider-native gateway
@@ -69,14 +69,62 @@ the client secret to a browser or mobile application. Store the returned opaque
 access and refresh tokens encrypted in application-owned storage.
 
 AgentPass access tokens expire after one hour. Store refresh tokens encrypted
-and rotate them with `client.OAuth.RefreshAccessToken`. Before sending, persist
-a unique 1–200 character `RefreshTokenParams.IdempotencyKey` with the old token.
-If the response is lost, retry the exact old token and key within five minutes;
-AgentPass returns the already-committed pair. A different key, an expired
-recovery window, or reuse after the replacement was itself used is treated as
-compromise and revokes that user's application connection. Discard the token
-pair and ask the user to reconnect; reconnecting does not reset the user's
-weekly or monthly usage for your application.
+and rotate them with `client.OAuth.RefreshAccessToken`. Refresh **requires**
+`RefreshTokenParams.IdempotencyKey`: a unique 1–200 character key with no
+leading/trailing whitespace or control characters. The SDK sends it in the HTTP
+`Idempotency-Key` header, not a form field. Authorization-code exchange does not
+require this header. See [refresh migration](#refresh-migration-from-v070-and-older)
+for existing integrations.
+
+Commit the key and old encrypted token durably **before** sending; a database
+transaction that can roll back after HTTP is not sufficient. Coordinate one
+in-flight refresh per grant across all backend replicas. If a response is lost,
+retry the exact old token and key within five minutes of the first successful
+rotation; AgentPass returns the already-committed pair. Reusing a consumed token
+with a different key, outside that recovery window, or after its replacement
+was itself used revokes that user's application connection. Stop retries and
+ask the user to reconnect; reconnecting does not reset weekly/monthly usage.
+
+Encrypt and atomically persist both replacement tokens before using either.
+Compare-and-swap the grant/token version so a stale refresh cannot overwrite a
+newer refresh or reconnection. Retain the attempt until this commit succeeds;
+generate a new key only for the next rotation, not another retry of the old one.
+
+### Raw refresh request
+
+Run only on a trusted backend. Load these values from your secret/token store;
+never put credentials in browser code, logs, or committed scripts. Persist
+`REFRESH_ATTEMPT_ID` before sending and reuse it with the old token on retry.
+
+```sh
+curl "$AGENTPASS_BASE_URL/oauth/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -H "Idempotency-Key: $REFRESH_ATTEMPT_ID" \
+  --data-urlencode "grant_type=refresh_token" \
+  --data-urlencode "refresh_token=$AGENTPASS_REFRESH_TOKEN" \
+  --data-urlencode "client_id=$AGENTPASS_CLIENT_ID" \
+  --data-urlencode "client_secret=$AGENTPASS_CLIENT_SECRET"
+```
+
+### Refresh error handling
+
+Inspect `error.code`, not just status: OAuth returns
+`{"error":{"code":"…","message":"…"}}`. In Go, use `errors.As` with
+`*agentpass.APIError` and inspect its `Code` and `StatusCode`.
+
+| Error | Application action |
+| --- | --- |
+| HTTP 400 `invalid_idempotency_key` | Integration configuration error. Rejected before token rotation; this rejection alone does not consume or revoke the refresh token. Fix the key and retry with the still-current token. Do not clear the connection or ask the user to reconnect for this error alone. |
+| HTTP 400 `refresh_token_reuse` | Connection revoked after unsafe token reuse. Stop retrying, discard the local pair, and reconnect AgentPass. |
+| HTTP 400 `invalid_grant` / HTTP 401 `grant_revoked` on credential use | Credential or grant unusable. Stop automatic refresh and reconnect. |
+| HTTP 401 `invalid_client` / HTTP 403 `app_inactive` | Fix backend credentials or app configuration; user reconnection cannot repair the client secret or reactivate the app. |
+| Timeout, lost response, or 5xx | Preserve the attempt and retry the exact token/key within the five-minute recovery window. After that window, stop retrying the ambiguous token and reconnect. |
+| SDK validation error before HTTP | Fix local parameters, including a missing key. Preserve the connection; not every non-API error is a transient network failure. |
+
+Expose an integration configuration error separately from an AI/planning failure
+or a user-reconnect action. Only invalidate the matching grant/token version:
+a stale failure must not delete a newer connection. Never log token values,
+client secrets, or refresh request bodies.
 
 For an operator-approved native account flow, the mobile app submits account
 credentials directly to AgentPass and gives your backend only the returned
@@ -135,6 +183,39 @@ See `examples/backend` for a native OpenAI Responses HTTP request and
 provider-native inference, and settlement-header flow.
 
 ## Migrating to v0.8.0
+
+### Refresh migration from v0.7.0 and older
+
+Mandatory refresh idempotency is a **breaking change introduced in v0.8.0**.
+SDK v0.8.1 clarifies the same contract; it does not add a new server requirement.
+SDK v0.7.0 and older cannot send the required header. Initial login can still
+succeed, with the integration failing later when its access token expires.
+
+1. Upgrade to `github.com/jianqi-zhao/agentpass-go@v0.8.1` (v0.8.0 is the minimum
+   version with refresh-key support).
+2. Add a durable refresh-attempt record with the old encrypted token, grant/token
+   version, attempt time, and a key generated once using `NewIdempotencyKey`.
+   Commit it before HTTP, and serialize/reuse the same attempt across replicas.
+3. Pass its key in `RefreshTokenParams.IdempotencyKey`. **Upgrading alone is
+   insufficient**: omitting the field fails local validation.
+4. On ambiguous failures, reuse the old token and key within the recovery window.
+   Atomically save both replacement tokens with a grant/token-version check.
+5. Implement the [refresh error handling](#refresh-error-handling) above.
+   Missing-key rejection alone does not require user reconnection.
+
+```go
+replacement, err := client.OAuth.RefreshAccessToken(ctx, agentpass.RefreshTokenParams{
+    RefreshToken:   attempt.RefreshToken,
+    ClientID:       clientID,
+    ClientSecret:   clientSecret,
+    IdempotencyKey: attempt.IdempotencyKey,
+})
+```
+
+`attempt` is your application's persisted refresh attempt, not an SDK object.
+The SDK does not generate or persist refresh keys on your behalf.
+
+### Retired inference helpers
 
 The unused capability-based inference API has been retired. This is a breaking
 pre-1.0 SDK release: `Client.Responses`, `ResponsesService`,

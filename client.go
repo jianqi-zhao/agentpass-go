@@ -20,7 +20,7 @@ const (
 	// DefaultBaseURL is the public AgentPass API endpoint.
 	DefaultBaseURL = "https://www.prsvrc.com/agentpass"
 	// Version is the SDK version sent in the default User-Agent header.
-	Version = "0.8.0"
+	Version = "0.8.1"
 	// DefaultHTTPTimeout exceeds AgentPass's default 15-minute synchronous
 	// provider wait, leaving a small allowance for network and settlement work.
 	DefaultHTTPTimeout = 16 * time.Minute

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -213,6 +214,27 @@ func TestRefreshAccessToken(t *testing.T) {
 	}
 	if token.AccessToken != "ap_new" || token.RefreshToken != "refresh_new" {
 		t.Fatalf("unexpected refreshed token: %+v", token)
+	}
+}
+
+func TestRefreshAccessTokenRequiresDurableIdempotencyKey(t *testing.T) {
+	for _, key := range []string{"", " ", " leading", "trailing ", "bad\nkey", "bad\x7fkey", strings.Repeat("a", 201)} {
+		t.Run(fmt.Sprintf("key_%q", key), func(t *testing.T) {
+			client := newTestClient(t, func(response http.ResponseWriter, request *http.Request) {
+				t.Fatal("invalid refresh key must fail before any HTTP request")
+			})
+			_, err := client.OAuth.RefreshAccessToken(context.Background(), agentpass.RefreshTokenParams{
+				RefreshToken: "refresh_old", ClientID: "client_123", ClientSecret: "server-secret",
+				IdempotencyKey: key,
+			})
+			if err == nil || !strings.Contains(err.Error(), "idempotency key") {
+				t.Fatalf("expected local key validation, got %v", err)
+			}
+			var apiError *agentpass.APIError
+			if errors.As(err, &apiError) {
+				t.Fatal("local validation must not pretend the server rejected a token")
+			}
+		})
 	}
 }
 
