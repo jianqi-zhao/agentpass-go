@@ -72,8 +72,8 @@ func TestAuthorizationURL(t *testing.T) {
 	if parsed.Query().Get("model") != "openai:gpt-5.6-sol" || parsed.Query().Get("default_model") != "openai:gpt-5.6-sol" {
 		t.Fatalf("unexpected model query: %s", parsed.RawQuery)
 	}
-	if parsed.Query().Get("weekly_limit") != "2.5" {
-		t.Fatalf("unexpected weekly limit: %s", parsed.RawQuery)
+	if parsed.Query().Has("weekly_limit") || parsed.Query().Has("monthly_limit") {
+		t.Fatalf("retired app limits must not be sent: %s", parsed.RawQuery)
 	}
 }
 
@@ -86,10 +86,9 @@ func TestCurrentUsage(t *testing.T) {
 			t.Errorf("unexpected authorization: %s", request.Header.Get("Authorization"))
 		}
 		_, _ = io.WriteString(response, `{
-			"object":"agentpass.usage","grant_id":"grant_123",
+			"object":"agentpass.usage","scope":"user","grant_id":"grant_123",
 			"app":{"client_id":"client_123","name":"Enjoy Life"},
-			"week":{"starts_at":"2026-08-03T00:00:00Z","ends_at":"2026-08-10T00:00:00Z","limit":2.5,"used":0.21,"reserved":0.04,"remaining":2.25},
-			"month":{"starts_at":"2026-08-01T00:00:00Z","ends_at":"2026-09-01T00:00:00Z","limit":10,"used":0.51,"reserved":0.04,"remaining":9.45},
+			"week":{"starts_at":"2026-08-03T00:00:00Z","ends_at":"2026-08-10T00:00:00Z","resets_at":"2026-08-10T00:00:00Z","limit":500,"used":170,"reserved":20,"remaining":310,"remaining_percent":62,"can_start_new_work":true},
 			"updated_at":"2026-08-04T12:00:00Z"
 		}`)
 	}, agentpass.WithAccessToken("ap_test"))
@@ -98,7 +97,7 @@ func TestCurrentUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if usage.App.Name != "Enjoy Life" || usage.Week.Limit != 2.5 || usage.Week.Used != 0.21 || usage.Week.Remaining != 2.25 {
+	if usage.App.Name != "Enjoy Life" || usage.Week.Limit != 500 || usage.Week.RemainingPercent != 62 || !usage.Week.CanStartNewWork || usage.Week.Remaining != 310 {
 		t.Fatalf("unexpected usage summary: %+v", usage)
 	}
 }

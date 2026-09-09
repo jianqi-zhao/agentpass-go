@@ -6,7 +6,7 @@ The AgentPass Go SDK is a dependency-free backend helper for:
 - confidential authorization-code exchange and refresh-token rotation;
 - verified AgentPass identity lookup for `identity.basic` grants;
 - provider-native OpenAI and Anthropic base URLs;
-- grant-scoped weekly and monthly usage summaries;
+- user-wide weekly allowance status, shared across all connected apps;
 - backend-issued, one-time hosted usage URLs for iOS `WKWebView`;
 - redirect-safe provider HTTP clients and stable idempotency keys.
 
@@ -19,8 +19,23 @@ are never scaled or converted to another unit.
 ## Install
 
 ```bash
-go get github.com/jianqi-zhao/agentpass-go@v0.8.1
+go get github.com/jianqi-zhao/agentpass-go@v0.9.0
 ```
+
+## Weekly allowance migration (AgentPass 0.28.0)
+
+Use SDK v0.9.0 or newer. Older SDKs require the removed monthly usage block.
+The API now returns `scope: user` and one `week`; `UsageSummary.Month` is removed.
+OAuth `MonthlyLimit` and `WeeklyLimit` are deprecated and ignored. Omit them:
+authorization grants model access, not a separate per-app budget.
+
+All apps share settled usage, pending request holds, and active planning
+estimates. Old wallet balances and monthly limits do not gate requests.
+A plan is admitted against its last-five-successful-run average; once admitted
+it can finish beyond allowance. Every round stays in the plan's admission week,
+so overrun never becomes next week's debt. On `weekly_allowance_exhausted`,
+fetch live usage and wait for reset. Do not change idempotency keys to evade it.
+Token refresh and same-key, same-body inference retry rules are unchanged.
 
 ## Call the provider-native gateway
 
@@ -83,7 +98,7 @@ retry the exact old token and key within five minutes of the first successful
 rotation; AgentPass returns the already-committed pair. Reusing a consumed token
 with a different key, outside that recovery window, or after its replacement
 was itself used revokes that user's application connection. Stop retries and
-ask the user to reconnect; reconnecting does not reset weekly/monthly usage.
+ask the user to reconnect; reconnecting does not reset the shared weekly allowance.
 
 Encrypt and atomically persist both replacement tokens before using either.
 Compare-and-swap the grant/token version so a stale refresh cannot overwrite a
@@ -146,8 +161,10 @@ fragment, not the query. Parse the fragment locally, remove it from the visible
 URL immediately, and never send it to the Go backend, analytics, or crash logs.
 
 Use `client.Usage.Current(ctx)` with the connected user's access token to read
-the app grant's calendar-week and calendar-month limits, settled usage,
-in-flight reservations, and remaining credits. Return only the display fields
+the user's shared weekly status: `Week.RemainingPercent`, `Week.ResetsAt`,
+and `Week.CanStartNewWork`. The allowance is currently 500 units and resets on
+Monday at 00:00 UTC. Fetch it when returning to the app, after work, and at reset;
+never infer live availability from an old receipt. Return only the display fields
 your frontend needs; never send the AgentPass access token to frontend code.
 
 To use AgentPass's ready-made mobile UI, call
@@ -191,7 +208,7 @@ SDK v0.8.1 clarifies the same contract; it does not add a new server requirement
 SDK v0.7.0 and older cannot send the required header. Initial login can still
 succeed, with the integration failing later when its access token expires.
 
-1. Upgrade to `github.com/jianqi-zhao/agentpass-go@v0.8.1` (v0.8.0 is the minimum
+1. Upgrade to `github.com/jianqi-zhao/agentpass-go@v0.9.0` (v0.8.0 is the minimum
    version with refresh-key support).
 2. Add a durable refresh-attempt record with the old encrypted token, grant/token
    version, attempt time, and a key generated once using `NewIdempotencyKey`.

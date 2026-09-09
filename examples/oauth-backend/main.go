@@ -117,8 +117,7 @@ func (app *application) connect(response http.ResponseWriter, request *http.Requ
 		ClientID: app.clientID, RedirectURI: app.redirectURI,
 		Capabilities: []string{"ai.inference"},
 		Models:       []string{"openai:gpt-5.6-sol"},
-		DefaultModel: "openai:gpt-5.6-sol", MonthlyLimit: 10,
-		WeeklyLimit: 2.5, State: state,
+		DefaultModel: "openai:gpt-5.6-sol", State: state,
 	})
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusInternalServerError)

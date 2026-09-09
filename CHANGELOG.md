@@ -3,6 +3,24 @@
 All notable SDK changes are recorded here. The project follows semantic
 versioning while its public API remains pre-1.0.
 
+## v0.9.0 - 2026-09-09
+
+- Breaking: AgentPass 0.28.0 replaces grant-specific weekly/monthly usage with
+  one 500-unit weekly allowance per user, shared across all apps. Upgrade to
+  this SDK before consuming that server's usage response; v0.8.x requires the
+  retired monthly block and rejects the new response.
+- `Usage.Current` now reads `scope: user` and exposes `Week.RemainingPercent`,
+  `Week.ResetsAt`, and `Week.CanStartNewWork`. `Month` is removed. Fetch status
+  live when returning to the app, after work, and at reset; do not infer current
+  availability from a historical receipt. Other app identities remain private.
+- OAuth `MonthlyLimit` and `WeeklyLimit` fields are deprecated and ignored.
+  Omit them: authorization controls model access, not separate app budgets.
+- Inference retries retain the same body and idempotency key. A new planning
+  admission is checked against the last-five-run average; admitted plans may
+  overrun without debt carrying into the next week. On
+  `weekly_allowance_exhausted`, fetch usage and wait for reset rather than retrying
+  with new identities. OAuth refresh idempotency and rotation are unchanged.
+
 ## v0.8.1 - 2026-09-06
 
 - Document the existing mandatory refresh idempotency contract, introduced in
