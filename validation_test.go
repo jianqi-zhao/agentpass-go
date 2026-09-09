@@ -221,7 +221,6 @@ func TestAuthorizationURLRejectsInvalidInputs(t *testing.T) {
 		ClientID:     "client_123",
 		RedirectURI:  "https://app.example/callback",
 		Capabilities: []string{"ai.inference"},
-		MonthlyLimit: 10,
 		State:        "state",
 	}
 	tests := []struct {
@@ -270,7 +269,6 @@ func TestAuthorizationURLAcceptsIPv6LoopbackRedirect(t *testing.T) {
 		ClientID:     "client_123",
 		RedirectURI:  "http://[::1]:8080/callback",
 		Capabilities: []string{"ai.inference"},
-		MonthlyLimit: 1,
 		State:        "state",
 	})
 	if err != nil {

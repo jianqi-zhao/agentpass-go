@@ -52,8 +52,6 @@ func TestAuthorizationURL(t *testing.T) {
 		Capabilities: []string{"ai.inference", "identity.basic"},
 		Models:       []string{"openai:gpt-5.6-sol"},
 		DefaultModel: "openai:gpt-5.6-sol",
-		MonthlyLimit: 10,
-		WeeklyLimit:  2.5,
 		State:        "signed-state",
 	})
 	if err != nil {

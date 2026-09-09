@@ -19,14 +19,14 @@ are never scaled or converted to another unit.
 ## Install
 
 ```bash
-go get github.com/jianqi-zhao/agentpass-go@v0.9.0
+go get github.com/jianqi-zhao/agentpass-go@v0.10.0
 ```
 
-## Weekly allowance migration (AgentPass 0.28.0)
+## Weekly allowance migration (AgentPass 0.29.0)
 
-Use SDK v0.9.0 or newer. Older SDKs require the removed monthly usage block.
+Use SDK v0.10.0 or newer. Older SDKs require the removed monthly usage block.
 The API now returns `scope: user` and one `week`; `UsageSummary.Month` is removed.
-OAuth `MonthlyLimit` and `WeeklyLimit` are deprecated and ignored. Omit them:
+OAuth has no per-app budget fields. In v0.10.0, `MonthlyLimit` and `WeeklyLimit` are removed:
 authorization grants model access, not a separate per-app budget.
 
 All apps share settled usage, pending request holds, and active planning
@@ -208,7 +208,7 @@ SDK v0.8.1 clarifies the same contract; it does not add a new server requirement
 SDK v0.7.0 and older cannot send the required header. Initial login can still
 succeed, with the integration failing later when its access token expires.
 
-1. Upgrade to `github.com/jianqi-zhao/agentpass-go@v0.9.0` (v0.8.0 is the minimum
+1. Upgrade to `github.com/jianqi-zhao/agentpass-go@v0.10.0` (v0.8.0 is the minimum
    version with refresh-key support).
 2. Add a durable refresh-attempt record with the old encrypted token, grant/token
    version, attempt time, and a key generated once using `NewIdempotencyKey`.

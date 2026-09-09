@@ -3,6 +3,15 @@
 All notable SDK changes are recorded here. The project follows semantic
 versioning while its public API remains pre-1.0.
 
+## v0.10.0 - 2026-09-09
+
+- Remove the deprecated OAuth `MonthlyLimit` and `WeeklyLimit` fields. Delete
+  these fields from struct literals when upgrading; apps authorize models,
+  not budgets. The user-scoped weekly usage API remains unchanged.
+- AgentPass 0.29.0 gives existing users a fresh 500-unit allowance at the
+  development cutover. Fetch usage live; older settlement receipts remain
+  historical and do not describe the reset allowance.
+
 ## v0.9.0 - 2026-09-09
 
 - Breaking: AgentPass 0.28.0 replaces grant-specific weekly/monthly usage with

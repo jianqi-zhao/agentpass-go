@@ -24,8 +24,6 @@ type AuthorizationURLParams struct {
 	Capabilities []string
 	Models       []string
 	DefaultModel string
-	MonthlyLimit float64 // Deprecated: ignored; allowance belongs to the user.
-	WeeklyLimit  float64 // Deprecated: ignored; allowance belongs to the user.
 	State        string
 }
 
